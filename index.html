@@ -1,0 +1,2117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Motor and Drive Matcher: describe a DC motor by its datasheet numbers, add gearing and a load, see where the motor really runs, and solve for the gear ratio that hits a target speed under load. Part of Engineered by the Numbers. Runs entirely in your browser.">
+<title>Motor and Drive Matcher</title>
+<link rel="icon" href="data:,">
+<script>
+  (function () {
+    try {
+      var t = JSON.parse(localStorage.getItem('ebtn-theme') || 'null');
+      if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+  })();
+</script>
+<style>
+/* BEGIN vendor:shell.css */
+/* ecosystem/shell/shell.css v1.0.0
+   Shared look for the Engineered by the Numbers tools. Palette and header,
+   readout and footer patterns follow the Gear Train Workbench. Light theme is
+   "drafting paper"; data-theme="dark" is "blueprint". Every colour a tool
+   draws should come from these tokens (read them with app.pal()). */
+:root, :root[data-theme="light"]{
+  --paper:#F6F5F0; --grid-minor:#E7E5DC; --grid-major:#D8D5C8;
+  --ink:#23272C; --ink-soft:#555B63; --line:#C9C6BA;
+  --steel:#DCE1E6; --steel-edge:#7E8892;
+  --dykem:#1D5FA8; --dykem-soft:#E3ECF7;
+  --brass:#B08A2E; --brass-soft:#F5EBD2; --brass-ink:#7A5A16;
+  --pass:#2E7D46; --fail:#B3402F; --warn:#8A5A00;
+  --pos-fill:#DCE6F5; --neg-fill:#F6DDD8;
+  --dro-bg:#1D2126; --dro-amber:#FFB000; --dro-label:#8B929B;
+  --panel:#F1EFE8; --field:#ffffff; --rule:#B9B6AA; --th-bg:#EDEBE2;
+  --scrim:rgba(35,39,44,.5); --badge-text:#ffffff;
+  --font-ui:"Avenir Next","Segoe UI","Trebuchet MS",system-ui,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,Menlo,monospace;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --paper:#0C2B4E; --grid-minor:#123659; --grid-major:#1A4771;
+  --ink:#EAF2FB; --ink-soft:#A8C2DC; --line:#1E5183;
+  --steel:#5E86AB; --steel-edge:#E4EFFA;
+  --dykem:#5FD0E8; --dykem-soft:#123659;
+  --brass:#FFC94D; --brass-soft:#2A2410; --brass-ink:#FFC94D;
+  --pass:#57D493; --fail:#FF8A73; --warn:#FFC94D;
+  --pos-fill:#1D4D7A; --neg-fill:#5A2E3A;
+  --dro-bg:#071B31; --dro-amber:#FFC94D; --dro-label:#A8C2DC;
+  --panel:#0F3157; --field:#123659; --rule:#1E5183; --th-bg:#123659;
+  --scrim:rgba(3,15,28,.65); --badge-text:#08243F;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);color:var(--ink);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;font-size:14px}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--dykem)}
+
+/* ---------- Header / title block ---------- */
+.sh-header{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:2px solid var(--ink);background:var(--paper);flex-wrap:wrap}
+.titleblock{display:flex;flex-direction:column;line-height:1.15}
+.titleblock .t1{font-size:15px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.titleblock .t2{font-size:11.5px;letter-spacing:.06em;color:var(--ink-soft);text-transform:uppercase;white-space:nowrap}
+.modes{display:flex;border:1.5px solid var(--ink);border-radius:3px;overflow:hidden}
+.modes button{font:600 12.5px var(--font-ui);letter-spacing:.05em;text-transform:uppercase;padding:6px 11px;border:none;background:transparent;color:var(--ink);cursor:pointer}
+.modes button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.spacer{flex:1}
+.namewrap{display:flex;align-items:center;gap:6px;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft)}
+.namewrap input{font:15px var(--font-ui);border:none;border-bottom:1.5px solid var(--ink);background:transparent;padding:3px 4px;width:118px;color:var(--ink)}
+.hbtns{display:flex;gap:5px;flex-wrap:wrap}
+.hbtns button{font:600 12.5px var(--font-ui);letter-spacing:.02em;padding:6px 8px;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);border-radius:3px;cursor:pointer}
+.hbtns button:hover{background:var(--ink);color:var(--paper)}
+.hbtns button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+
+/* ---------- Small-screen notice ---------- */
+.sh-small{display:none;align-items:center;gap:10px;padding:6px 14px;background:var(--brass-soft);color:var(--ink);border-bottom:1.5px solid var(--brass);font-size:13px}
+.sh-small button{margin-left:auto;border:1.5px solid var(--ink);background:transparent;border-radius:3px;padding:2px 8px;cursor:pointer}
+@media (max-width:767.98px){ .sh-small:not([hidden]){display:flex} }
+
+/* ---------- Main three-column layout ---------- */
+.sh-main{flex:1;display:grid;grid-template-columns:300px minmax(0,1fr) 350px;min-height:0}
+.sh-col{overflow-y:auto;min-height:0}
+.sh-inputs{background:var(--panel);border-right:1.5px solid var(--line);padding:10px 12px 18px}
+.sh-results{background:var(--panel);border-left:1.5px solid var(--line);padding:10px 12px 18px}
+.sh-stage{padding:12px 14px;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid-minor) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor) 1px,transparent 1px);
+  background-size:20px 20px}
+@media (max-width:1180px){ .sh-main{grid-template-columns:270px minmax(0,1fr) 310px} }
+@media (max-width:1023.98px){
+  body{overflow:auto}
+  .sh-main{grid-template-columns:1fr;min-height:auto}
+  .sh-col{overflow:visible}
+  .sh-inputs,.sh-results{border:none;border-top:1.5px solid var(--line)}
+  .sh-stage{order:-1}
+}
+
+/* ---------- Input panel ---------- */
+.sec-h{font:700 12px var(--font-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.sec-h:first-child{margin-top:2px}
+.fld{display:grid;grid-template-columns:minmax(0,1fr) minmax(108px,auto);align-items:center;gap:4px 8px;margin:5px 0}
+.fld>label,.fld>.lbl{font-size:13.5px;line-height:1.25}
+.fld .ctl{display:flex;align-items:center;gap:4px}
+.fld input[type=text],.fld select,.fld input[type=number]{width:80px;min-width:0;font:14px var(--font-mono);padding:4px 6px;border:1.5px solid var(--steel-edge);border-radius:3px;background:var(--field);color:var(--ink);text-align:right}
+.fld select{text-align:left;font-family:var(--font-ui);font-size:13.5px;width:auto;max-width:176px}
+.fld .unit{font-size:12px;color:var(--ink-soft);white-space:nowrap}
+.fld input[aria-invalid="true"]{border-color:var(--fail);border-width:2px}
+.fld .err{grid-column:1/-1;font-size:12.5px;line-height:1.35;color:var(--fail);font-weight:600}
+.fld .err:empty{display:none}
+.fld .err::before{content:"⚠ "}
+.fld.wide{grid-template-columns:1fr}
+.chk{display:flex;align-items:center;gap:7px;font-size:13.5px;margin:6px 0;cursor:pointer}
+.chk input{width:16px;height:16px;accent-color:var(--dykem)}
+.note{font-size:12.5px;line-height:1.45;color:var(--ink-soft);margin:6px 0}
+.note.warn{color:var(--warn);font-weight:600}
+.note.warn::before{content:"⚠ "}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.btn{font:600 13px var(--font-ui);letter-spacing:.03em;padding:6px 10px;border:1.5px solid var(--ink);background:var(--field);color:var(--ink);border-radius:3px;cursor:pointer}
+.btn:hover{background:var(--ink);color:var(--paper)}
+.btn.primary{background:var(--ink);color:var(--paper)}
+.btn.primary:hover{background:var(--dykem);border-color:var(--dykem);color:var(--badge-text)}
+.btn.small{padding:3px 7px;font-size:12px}
+.btn.danger{border-color:var(--fail);color:var(--fail)}
+.btn.danger:hover{background:var(--fail);color:var(--badge-text)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.seg{display:inline-flex;border:1.5px solid var(--ink);border-radius:3px;overflow:hidden}
+.seg button{font:600 12.5px var(--font-ui);padding:4px 10px;border:none;background:var(--field);color:var(--ink);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.itemcard{border:1.5px solid var(--line);border-radius:4px;background:var(--field);padding:6px 8px;margin:6px 0}
+.itemcard.sel{border-color:var(--dykem);box-shadow:0 0 0 1px var(--dykem)}
+.itemcard .ih{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px}
+.itemcard .ih input{flex:1;min-width:0;font:600 13px var(--font-ui);border:none;border-bottom:1px dashed var(--line);background:transparent;padding:1px 2px}
+
+/* ---------- Stage (drawing) ---------- */
+.drawcard{background:var(--paper);border:1.5px solid var(--ink);border-radius:2px;position:relative}
+.drawcard svg{display:block;width:100%;height:auto;touch-action:none;user-select:none}
+.drawcard svg:focus-visible{outline:3px solid var(--dykem);outline-offset:-3px}
+.cap{font-size:12.5px;line-height:1.45;color:var(--ink-soft);margin-top:6px}
+.stationro{margin-top:8px;font:13px var(--font-mono);background:var(--field);border:1.5px solid var(--line);border-radius:3px;padding:6px 9px;min-height:2.2em}
+
+/* ---------- Results ---------- */
+.ro{width:100%;border-collapse:collapse;font-size:13.5px}
+.ro th{text-align:left;font-weight:400;padding:4px 4px 4px 0;border-bottom:1px dotted var(--line);vertical-align:top}
+.ro td{text-align:right;font:700 14px var(--font-mono);padding:4px 0;border-bottom:1px dotted var(--line);white-space:nowrap}
+.ro td.wrap{white-space:normal}
+.ro tr.sub th{padding-left:12px;color:var(--ink-soft)}
+.masked{display:inline-block;min-width:3.2em;text-align:center;border:1.5px dashed var(--ink-soft);border-radius:3px;color:var(--ink-soft);font-weight:400}
+.verdict{font-weight:700}
+.verdict.pass{color:var(--pass)}
+.verdict.fail{color:var(--fail)}
+.verdict.pass::before{content:"✓ "}
+.verdict.fail::before{content:"✗ "}
+.verdict.info{color:var(--warn)}
+.verdict.info::before{content:"● "}
+.reason{font:italic 13px var(--font-ui);color:var(--ink-soft);white-space:normal}
+
+/* ---------- Predict first ---------- */
+.pfbox{margin-top:12px;border:1.5px solid var(--ink);border-left-width:5px;border-radius:3px;background:var(--field);padding:9px 10px}
+.pfbox h3{font:700 12px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+.pfrow{display:grid;grid-template-columns:minmax(0,1fr) 92px 40px;gap:6px;align-items:center;margin:5px 0;font-size:13.5px}
+.pfrow input{font:14px var(--font-mono);padding:4px 6px;border:1.5px solid var(--steel-edge);border-radius:3px;background:var(--field);color:var(--ink);text-align:right;width:100%}
+.pfrow .unit{font-size:12px;color:var(--ink-soft)}
+.pfmsg{font-size:13px;line-height:1.45;margin:5px 0;padding:5px 7px;border-left:3px solid var(--line);background:var(--panel)}
+.pfmsg.match{border-left-color:var(--pass)}
+.pfmsg.close{border-left-color:var(--brass)}
+.pfmsg b{font-family:var(--font-mono)}
+.pftag{font:700 11px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;padding:1px 5px;border-radius:2px;margin-left:4px}
+.pftag.match{background:var(--pass);color:var(--badge-text)}
+.pftag.close{background:var(--brass-ink);color:var(--badge-text)}
+
+/* ---------- Show the working ---------- */
+.working{margin-top:12px;border:1.5px solid var(--line);border-radius:3px;background:var(--field)}
+.working>summary{cursor:pointer;padding:7px 10px;font:700 12px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft)}
+.working[open]>summary{color:var(--ink);border-bottom:1px solid var(--line)}
+.wk{list-style:none;padding:6px 10px 8px;counter-reset:wk}
+.wk li{counter-increment:wk;padding:6px 0;border-bottom:1px dotted var(--line);font-size:13px;line-height:1.5}
+.wk li:last-child{border-bottom:none}
+.wk .wt{font-weight:700}
+.wk .wt::before{content:counter(wk) ". "}
+.wk .wf,.wk .ws{font-family:var(--font-mono);font-size:12.5px;overflow-wrap:anywhere}
+.wk .wr{font-family:var(--font-mono);font-weight:700}
+.wk .wsrc{font-size:11.5px;color:var(--ink-soft);font-style:italic}
+
+/* ---------- Dialogs ---------- */
+dialog.sh-dlg{margin:auto;border:2px solid var(--ink);border-radius:5px;background:var(--paper);color:var(--ink);max-width:min(760px,94vw);width:100%;max-height:86vh;padding:0}
+dialog.sh-dlg::backdrop{background:var(--scrim)}
+.dlg-h{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1.5px solid var(--line);position:sticky;top:0;background:var(--paper)}
+.dlg-h h2{font-size:15px;letter-spacing:.1em;text-transform:uppercase;flex:1}
+.dlg-b{padding:14px 18px 18px;overflow-y:auto}
+.dlg-b h3{font-size:14px;letter-spacing:.06em;text-transform:uppercase;margin:16px 0 6px}
+.dlg-b p,.dlg-b li{font-size:14.5px;line-height:1.6;margin-bottom:7px}
+.dlg-b ul,.dlg-b ol{padding-left:22px;margin-bottom:8px}
+.dlg-b table{border-collapse:collapse;font-size:13px;width:100%}
+.dlg-b th,.dlg-b td{border:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+.dlg-b th{background:var(--th-bg);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase}
+.dlg-b td input{width:100%;min-width:60px;font:13px var(--font-mono);padding:2px 4px;border:1px solid var(--steel-edge);border-radius:2px;background:var(--field);color:var(--ink)}
+.dlg-b textarea{width:100%;font:12.5px var(--font-mono);padding:6px;border:1.5px solid var(--steel-edge);border-radius:3px;background:var(--field);color:var(--ink)}
+.teacher{margin-top:18px;padding:10px 12px;border:1.5px dashed var(--ink-soft);border-radius:3px}
+kbd{font:12px var(--font-mono);border:1px solid var(--steel-edge);border-bottom-width:2px;border-radius:3px;padding:1px 5px;background:var(--field)}
+
+/* ---------- Toast ---------- */
+.sh-toast{position:fixed;left:50%;bottom:54px;transform:translateX(-50%);background:var(--ink);color:var(--paper);font:14px var(--font-ui);padding:8px 16px;border-radius:4px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80vw;z-index:60}
+.sh-toast.on{opacity:1}
+
+/* ---------- Footer (attribution block, identical across tools) ---------- */
+.sh-footer{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;padding:6px 14px;border-top:1.5px solid var(--line);background:var(--panel);font-size:12px;color:var(--ink-soft)}
+.sh-footer .foot-by{color:var(--ink)}
+.sh-footer a{color:var(--ink-soft);text-decoration:underline;text-underline-offset:2px;text-decoration-color:var(--line)}
+.sh-footer a:hover{color:var(--dykem);text-decoration-color:var(--dykem)}
+.sh-footer .foot-by a{color:var(--ink)}
+.sh-footer .foot-spacer{flex:1}
+.sh-footer .foot-ai{width:100%;order:10}
+
+/* ---------- Accessibility ---------- */
+:focus-visible{outline:2px solid var(--dykem);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;scroll-behavior:auto !important}
+}
+
+/* ---------- Print report (always ink on paper) ---------- */
+#sh-report{display:none}
+@media print{
+  @page{size:letter;margin:12mm}
+  body>*:not(#sh-report){display:none !important}
+  body{overflow:visible;height:auto;display:block;background:#fff;color:#000}
+  #sh-report{display:block !important;font-family:var(--font-ui);color:#000;font-size:11.5px}
+  #sh-report .rb{border:2px solid #000;padding:12px 16px;margin-bottom:10px}
+  #sh-report h1{font-size:17px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:2px}
+  #sh-report h2{font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;margin:12px 0 4px;break-after:avoid}
+  #sh-report .sub{font-size:11px;letter-spacing:.06em;color:#444;margin-bottom:8px}
+  #sh-report table{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px;break-inside:auto}
+  #sh-report tr{break-inside:avoid}
+  #sh-report th,#sh-report td{border:1px solid #000;padding:3px 6px;text-align:left;vertical-align:top}
+  #sh-report th{background:#eee;font-size:10.5px;font-weight:700}
+  #sh-report tr.hd th{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}
+  #sh-report .fig{border:1px solid #000;break-inside:avoid}
+  #sh-report .fig svg{width:100%;height:auto;display:block}
+  #sh-report .mono{font-family:var(--font-mono)}
+  #sh-report .sig{margin-top:18px;font-size:11px}
+  #sh-report .sig span{display:inline-block;border-top:1px solid #000;min-width:200px;padding-top:3px;margin-right:36px}
+}
+/* END vendor:shell.css */
+
+/* ---------- Motor and Drive Matcher ---------- */
+.fld .ctl select.tsu{width:auto;font-size:12.5px;padding:3px 2px}
+.stcard .ih .rm,.cmpcard .ih .rm{margin-left:auto}
+.overall{font:13px var(--font-mono);color:var(--ink-soft);margin:4px 0 2px}
+.drawcard svg .plotarea{cursor:ew-resize}
+.cmp-t{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+.cmp-t th,.cmp-t td{border-bottom:1px dotted var(--line);padding:3px 3px;text-align:right;vertical-align:top}
+.cmp-t td{font-family:var(--font-mono);white-space:nowrap}
+.cmp-t td:first-child{font-family:var(--font-ui);white-space:normal}
+.cmp-t th:first-child,.cmp-t td:first-child{text-align:left}
+</style>
+</head>
+<body>
+<noscript>The Motor and Drive Matcher needs JavaScript turned on.</noscript>
+<script>
+/* BEGIN vendor:prediction-log.js */
+// ecosystem/prediction-log.js v1.0.0
+// Prediction Log record format (spec 07 Part A). Pure functions, no DOM.
+// Every tool writes records through this module so the Collector can merge them.
+const PredictionLog = (function () {
+  'use strict';
+  const SCHEMA = 'prediction-log';
+  const SCHEMA_VERSION = 1;
+  const FIELDS = ['schema', 'schemaVersion', 'tool', 'toolVersion', 'student', 'team', 'classPeriod',
+    'problemId', 'quantity', 'unit', 'predicted', 'model', 'measured', 'pctPredVsModel',
+    'pctMeasVsModel', 'attempt', 'timestamp', 'inputs', 'note'];
+  const NUMERIC = ['predicted', 'model', 'measured', 'pctPredVsModel', 'pctMeasVsModel'];
+  const NEWER_WARNING = 'made by a newer tool version; some fields may be ignored';
+
+  const isNum = v => typeof v === 'number' && isFinite(v);
+
+  // (value − reference) ÷ reference × 100; null when either is missing or the reference is 0 (00 §3).
+  function pctDiff(value, reference) {
+    if (!isNum(value) || !isNum(reference) || reference === 0) return null;
+    return (value - reference) / reference * 100;
+  }
+
+  // ISO 8601 local time with offset, e.g. 2026-09-27T14:03:09-05:00.
+  function isoLocal(date) {
+    const d = date || new Date();
+    const p = n => String(Math.abs(Math.trunc(n))).padStart(2, '0');
+    const off = -d.getTimezoneOffset();
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' +
+      p(d.getMinutes()) + ':' + p(d.getSeconds()) + (off >= 0 ? '+' : '-') + p(off / 60) + ':' + p(off % 60);
+  }
+
+  // Short stable hash (FNV-1a, 32-bit) for sandbox problem IDs.
+  function shortHash(obj) {
+    const s = typeof obj === 'string' ? obj : stableStringify(obj);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0').slice(0, 6);
+  }
+  function stableStringify(v) {
+    if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+    if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+    return JSON.stringify(v);
+  }
+  const sandboxProblemId = inputs => 'sandbox-' + shortHash(inputs);
+
+  // Attempt number for the next record: one more than the highest so far for
+  // this student, problem and quantity.
+  function nextAttempt(records, student, problemId, quantity) {
+    let max = 0;
+    for (const r of records) {
+      if (r.student === student && r.problemId === problemId && r.quantity === quantity && r.attempt > max) max = r.attempt;
+    }
+    return max + 1;
+  }
+
+  function makeRecord(o) {
+    const model = isNum(o.model) ? o.model : null;
+    const measured = isNum(o.measured) ? o.measured : null;
+    const rec = {
+      schema: SCHEMA, schemaVersion: SCHEMA_VERSION,
+      tool: String(o.tool || ''), toolVersion: String(o.toolVersion || ''),
+      student: (o.student || '').trim() || 'unnamed',
+      team: o.team || '', classPeriod: o.classPeriod || '',
+      problemId: String(o.problemId || 'sandbox'),
+      quantity: String(o.quantity || ''), unit: o.unit == null ? '' : String(o.unit),
+      predicted: o.predicted, model, measured,
+      pctPredVsModel: pctDiff(o.predicted, model),
+      pctMeasVsModel: pctDiff(measured, model),
+      attempt: o.attempt || 1,
+      timestamp: o.timestamp || isoLocal(),
+      inputs: o.inputs || { values: {}, units: {} },
+      note: o.note || '',
+    };
+    return rec;
+  }
+
+  // Update measured value and/or note after the fact; keeps the derived percent in step.
+  function annotate(rec, { measured, note } = {}) {
+    const out = Object.assign({}, rec);
+    if (measured !== undefined) { out.measured = isNum(measured) ? measured : null; out.pctMeasVsModel = pctDiff(out.measured, out.model); }
+    if (note !== undefined) out.note = String(note);
+    return out;
+  }
+
+  /* ---------------------------------------------------------------- JSON */
+  function toJSON(records) {
+    return { schema: SCHEMA, schemaVersion: SCHEMA_VERSION, records: records.map(r => Object.assign({}, r)) };
+  }
+
+  /* ---------------------------------------------------------------- CSV (RFC 4180) */
+  function csvCell(v) {
+    if (v === null || v === undefined) return '';
+    const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function toCSV(records) {
+    const lines = [FIELDS.join(',')];
+    for (const r of records) lines.push(FIELDS.map(f => csvCell(r[f])).join(','));
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  }
+  function parseCSVRows(text) {
+    const rows = []; let row = [], cell = '', i = 0, q = false;
+    if (text.charCodeAt(0) === 0xFEFF) i = 1;
+    for (; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (q) throw new Error('a quoted cell is not closed');
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter(r => !(r.length === 1 && r[0] === ''));
+  }
+  function fromCSV(text) {
+    const rows = parseCSVRows(text);
+    if (!rows.length) throw new Error('the file is empty');
+    const head = rows[0].map(h => h.trim());
+    for (const need of ['student', 'problemId', 'quantity', 'predicted']) {
+      if (head.indexOf(need) < 0) throw new Error('the header row has no "' + need + '" column');
+    }
+    const warnings = [];
+    const records = rows.slice(1).map(cells => {
+      const o = {};
+      head.forEach((h, k) => { o[h] = cells[k] === undefined ? '' : cells[k]; });
+      return normalize(o, warnings);
+    });
+    return { records, warnings: dedupeStrings(warnings) };
+  }
+
+  /* ---------------------------------------------------------------- normalize (either file form) */
+  function toNumOrNull(v) {
+    if (v === null || v === undefined || v === '') return null;
+    const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+    return isFinite(n) ? n : null;
+  }
+  function normalize(o, warnings) {
+    const ver = toNumOrNull(o.schemaVersion);
+    if (ver !== null && ver > SCHEMA_VERSION) warnings.push(NEWER_WARNING);
+    const r = {};
+    r.schema = SCHEMA; r.schemaVersion = SCHEMA_VERSION;
+    for (const f of ['tool', 'toolVersion', 'student', 'team', 'classPeriod', 'problemId', 'quantity', 'unit', 'timestamp', 'note']) {
+      r[f] = o[f] == null ? '' : String(o[f]);
+    }
+    if (!r.student) r.student = 'unnamed';
+    for (const f of NUMERIC) r[f] = toNumOrNull(o[f]);
+    r.attempt = Math.max(1, Math.round(toNumOrNull(o.attempt) || 1));
+    let inputs = o.inputs;
+    if (typeof inputs === 'string') { try { inputs = inputs ? JSON.parse(inputs) : {}; } catch (e) { inputs = {}; warnings.push('some input snapshots could not be read'); } }
+    r.inputs = inputs && typeof inputs === 'object' ? inputs : {};
+    // Derived fields are recomputed so a hand-edited spreadsheet stays consistent.
+    r.pctPredVsModel = pctDiff(r.predicted, r.model);
+    r.pctMeasVsModel = pctDiff(r.measured, r.model);
+    return r;
+  }
+  function fromJSON(text) {
+    let data;
+    try { data = typeof text === 'string' ? JSON.parse(text) : text; }
+    catch (e) { throw new Error('this is not valid JSON (' + e.message + ')'); }
+    const warnings = [];
+    let list;
+    if (Array.isArray(data)) list = data;
+    else if (data && Array.isArray(data.records)) {
+      if (data.schema && data.schema !== SCHEMA) throw new Error('this is a "' + data.schema + '" file, not a prediction log');
+      if (toNumOrNull(data.schemaVersion) > SCHEMA_VERSION) warnings.push(NEWER_WARNING);
+      list = data.records;
+    } else throw new Error('no "records" list was found');
+    return { records: list.map(o => normalize(o || {}, warnings)), warnings: dedupeStrings(warnings) };
+  }
+  // Pick the reader from the file name or content.
+  function parseFile(name, text) {
+    const t = String(text).replace(/^﻿/, '').trimStart();
+    if (/\.json$/i.test(name) || t[0] === '{' || t[0] === '[') return fromJSON(t);
+    return fromCSV(String(text));
+  }
+
+  const dupKey = r => [r.student, r.tool, r.problemId, r.quantity, r.attempt, r.timestamp].join('\u0001');
+  function dedupe(records) {
+    const seen = new Set(), out = [];
+    for (const r of records) { const k = dupKey(r); if (!seen.has(k)) { seen.add(k); out.push(r); } }
+    return { records: out, removed: records.length - out.length };
+  }
+
+  // One tab-separated line (no header) for pasting into a shared spreadsheet.
+  function toTSVRow(r) {
+    return FIELDS.map(f => {
+      const v = r[f];
+      if (v === null || v === undefined) return '';
+      return (typeof v === 'object' ? JSON.stringify(v) : String(v)).replace(/[\t\r\n]+/g, ' ');
+    }).join('\t');
+  }
+
+  function dedupeStrings(a) { return a.filter((s, i) => a.indexOf(s) === i); }
+
+  return {
+    SCHEMA, SCHEMA_VERSION, FIELDS, NEWER_WARNING,
+    pctDiff, isoLocal, shortHash, stableStringify, sandboxProblemId, nextAttempt,
+    makeRecord, annotate, toJSON, toCSV, fromCSV, fromJSON, parseFile, parseCSVRows, dedupe, toTSVRow,
+  };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = PredictionLog;
+/* END vendor:prediction-log.js */
+/* BEGIN vendor:schemas.js */
+// ecosystem/schemas.js v1.0.0
+// Validators and builders for the files the tools exchange (see ecosystem/schemas.md).
+// Each reader returns { value, warnings } or throws an Error whose message is written
+// for students ("This file ..."). Pure functions, no DOM.
+const Schemas = (function () {
+  'use strict';
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const fail = msg => { throw new Error(msg); };
+
+  function parse(text) {
+    if (text && typeof text === 'object') return text;
+    try { return JSON.parse(String(text).replace(/^﻿/, '')); }
+    catch (e) { fail('This file is not valid JSON, so it could not be read.'); }
+  }
+  function header(obj, schema, current, warnings) {
+    if (!obj || typeof obj !== 'object') fail('This file is empty or not a JSON object.');
+    if (obj.schema !== schema) fail('This is not a ' + schema + ' file' + (obj.schema ? ' (it says "' + obj.schema + '").' : '.'));
+    const v = Number(obj.schemaVersion);
+    if (!isFinite(v) || v < 1) fail('This file has no schema version, so it could not be read.');
+    if (v > current) warnings.push('This file was made by a newer tool version; some fields may be ignored.');
+  }
+  // Angle difference in degrees, 0..180.
+  function angleGap(a, b) { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d; }
+
+  /* ------------------------------------------------------------ shaft-loads (spec 01 §7) */
+  const SHAFT_LOADS_VERSION = 1;
+  function readShaftLoads(text) {
+    const obj = parse(text), warnings = [];
+    header(obj, 'shaft-loads', SHAFT_LOADS_VERSION, warnings);
+    if (!Array.isArray(obj.loads) || obj.loads.length === 0) fail('This shaft-loads file has no loads in it.');
+    const units = obj.units || {};
+    if (units.force && units.force !== 'N') fail('Forces in this file are in ' + units.force + '. Only N is supported.');
+    if (units.torque && units.torque !== 'N·m' && units.torque !== 'N*m' && units.torque !== 'N m') fail('Torques in this file are in ' + units.torque + '. Only N·m is supported.');
+    const loads = obj.loads.map((l, i) => {
+      const n = i + 1;
+      if (!l || typeof l !== 'object') fail('Load ' + n + ' is not readable.');
+      const magnitude = Number(l.magnitude);
+      if (!isFinite(magnitude)) fail('Load ' + n + ' has no magnitude.');
+      if (magnitude < 0) fail('Load ' + n + ' has a negative magnitude. Magnitudes must be positive; the direction goes in angleDeg.');
+      const angleDeg = l.angleDeg == null ? 270 : Number(l.angleDeg);
+      if (!isFinite(angleDeg)) fail('Load ' + n + ' has an angle that is not a number.');
+      const torque = l.torque == null ? null : Number(l.torque);
+      if (torque !== null && !isFinite(torque)) fail('Load ' + n + ' has a torque that is not a number.');
+      return {
+        label: String(l.label || ('Load ' + n)).slice(0, 20), magnitude, angleDeg, torque,
+        plane: l.plane || null, shaft: l.shaft == null ? null : String(l.shaft),
+      };
+    });
+    const angles = loads.map(l => l.angleDeg);
+    let spread = 0;
+    // Spec 01 §5.5: warn when any two loads point more than 5° apart. Version 1
+    // places every imported load by its magnitude, so even opposed loads need a look.
+    for (let i = 0; i < angles.length; i++) for (let j = i + 1; j < angles.length; j++) {
+      spread = Math.max(spread, angleGap(angles[i], angles[j]));
+    }
+    return {
+      value: { source: String(obj.source || 'unknown tool'), loads, notes: Array.isArray(obj.notes) ? obj.notes.map(String) : [] },
+      warnings, planeSpreadDeg: spread, multiPlane: spread > 5,
+    };
+  }
+  function makeShaftLoads(source, loads, notes) {
+    return {
+      schema: 'shaft-loads', schemaVersion: SHAFT_LOADS_VERSION, source,
+      units: { force: 'N', torque: 'N·m' },
+      loads: loads.map(l => {
+        const o = { label: l.label, magnitude: l.magnitude, angleDeg: l.angleDeg };
+        if (isNum(l.torque)) o.torque = l.torque;
+        if (l.plane) o.plane = l.plane;
+        if (l.shaft != null) o.shaft = l.shaft;
+        return o;
+      }),
+      notes: notes || [],
+    };
+  }
+
+  /* ------------------------------------------------------------ drive-request / drive-result (spec 02 §5.5) */
+  const DRIVE_VERSION = 1;
+  function readStages(list, where) {
+    if (list == null) return null;
+    if (!Array.isArray(list) || !list.length) fail(where + ' has an empty stage list.');
+    return list.map((s, i) => {
+      const ratio = Number(s.ratio), efficiency = s.efficiency == null ? 1 : Number(s.efficiency);
+      if (!(ratio > 0)) fail('Stage ' + (i + 1) + ' in ' + where + ' needs a ratio greater than 0.');
+      if (!(efficiency > 0 && efficiency <= 1)) fail('Stage ' + (i + 1) + ' in ' + where + ' needs an efficiency between 0 and 1.');
+      return { ratio, efficiency };
+    });
+  }
+  function readDriveRequest(text) {
+    const obj = parse(text), warnings = [];
+    header(obj, 'drive-request', DRIVE_VERSION, warnings);
+    const loadTorque = Number(obj.loadTorque);
+    if (!isFinite(loadTorque) || loadTorque < 0) fail('This drive request needs a load torque of 0 N·m or more.');
+    const targetSpeed = obj.targetSpeed == null ? null : Number(obj.targetSpeed);
+    if (targetSpeed !== null && !(targetSpeed > 0)) fail('The target speed in this drive request must be greater than 0 rpm.');
+    let motor = null;
+    if (obj.motor) {
+      const m = obj.motor;
+      motor = { label: String(m.label || ''), stallTorque: Number(m.stallTorque), noLoadSpeed: Number(m.noLoadSpeed), count: m.count == null ? 1 : Number(m.count) };
+      if (!(motor.stallTorque > 0) || !(motor.noLoadSpeed > 0)) fail('The motor in this drive request needs a stall torque and no-load speed greater than 0.');
+    }
+    return { value: { source: String(obj.source || 'unknown tool'), loadTorque, targetSpeed, stages: readStages(obj.stages, 'this drive request'), motor, note: obj.note ? String(obj.note) : '' }, warnings };
+  }
+  function makeDriveRequest(source, o) {
+    const r = { schema: 'drive-request', schemaVersion: DRIVE_VERSION, source, units: { torque: 'N·m', speed: 'rpm' }, loadTorque: o.loadTorque };
+    if (isNum(o.targetSpeed)) r.targetSpeed = o.targetSpeed;
+    if (o.stages) r.stages = o.stages.map(s => ({ ratio: s.ratio, efficiency: s.efficiency }));
+    if (o.motor) r.motor = Object.assign({}, o.motor);
+    if (o.note) r.note = o.note;
+    return r;
+  }
+  function makeDriveResult(source, o) {
+    return {
+      schema: 'drive-result', schemaVersion: DRIVE_VERSION, source, units: { torque: 'N·m', speed: 'rpm', power: 'W' },
+      motor: Object.assign({}, o.motor),
+      stages: (o.stages || []).map(s => ({ ratio: s.ratio, efficiency: s.efficiency })),
+      ratio: o.ratio, efficiency: o.efficiency,
+      loadTorque: o.loadTorque, targetSpeed: isNum(o.targetSpeed) ? o.targetSpeed : null,
+      ratioRoots: o.ratioRoots || null,
+      operatingPoint: Object.assign({}, o.operatingPoint),
+      dutyBand: o.dutyBand,
+    };
+  }
+  function readDriveResult(text) {
+    const obj = parse(text), warnings = [];
+    header(obj, 'drive-result', DRIVE_VERSION, warnings);
+    if (!(Number(obj.ratio) > 0)) fail('This drive result has no gear ratio.');
+    if (!obj.operatingPoint || typeof obj.operatingPoint !== 'object') fail('This drive result has no operating point.');
+    return { value: obj, warnings };
+  }
+
+  /* ------------------------------------------------------------ design file envelope (00 §6) */
+  function makeDesignFile(meta, state) {
+    return { tool: meta.tool, toolVersion: meta.toolVersion, schemaVersion: meta.schemaVersion, savedAt: new Date().toISOString(), state };
+  }
+  // opts: { tool, schemaVersion, migrate(fromVersion, state) -> { state, dropped: [..] } }
+  function readDesignFile(text, opts) {
+    const obj = parse(text), warnings = [];
+    if (!obj || typeof obj !== 'object' || !('state' in obj)) {
+      if (obj && obj.schema) fail('This is a ' + obj.schema + ' file, not a saved design. Use the import menu for it.');
+      fail('This is not a saved design file.');
+    }
+    if (obj.tool && opts.tool && obj.tool !== opts.tool) fail('This design was saved from the ' + obj.tool + ', not the ' + opts.tool + '.');
+    const v = Number(obj.schemaVersion) || 1;
+    let state = obj.state;
+    if (v > opts.schemaVersion) warnings.push('This design was saved by a newer version of the tool. Anything this version does not know about was left out.');
+    else if (v < opts.schemaVersion && opts.migrate) {
+      const m = opts.migrate(v, state);
+      state = m.state;
+      if (m.dropped && m.dropped.length) warnings.push('Could not load from the older file: ' + m.dropped.join(', ') + '.');
+    }
+    return { value: { state, savedAt: obj.savedAt || null, toolVersion: obj.toolVersion || '' }, warnings };
+  }
+
+  // Detect which kind of file this is, for tools that accept several on one Load button.
+  function kindOf(text) {
+    let obj; try { obj = parse(text); } catch (e) { return null; }
+    if (obj && obj.schema) return obj.schema;
+    if (obj && 'state' in obj) return 'design';
+    return null;
+  }
+
+  return {
+    SHAFT_LOADS_VERSION, DRIVE_VERSION, angleGap,
+    readShaftLoads, makeShaftLoads, readDriveRequest, makeDriveRequest, readDriveResult, makeDriveResult,
+    makeDesignFile, readDesignFile, kindOf,
+  };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = Schemas;
+/* END vendor:schemas.js */
+/* BEGIN vendor:motor-core.js */
+// ecosystem/motor-core.js v1.0.0
+// Permanent-magnet brushed DC motor at constant voltage (spec 02 §3): the
+// straight-line torque-speed model, parallel motors, gear stages, load types,
+// the operating point, the ratio solver, duty bands, and current and
+// efficiency. Plain SI in and out (N·m, rad/s, W, A, V); no DOM. Shared by the
+// Motor and Drive Matcher, the Conveyor Designer and the Gear Train Workbench.
+const MotorCore = (function () {
+  'use strict';
+  const G = 9.81;                      // m/s², as the unit plan uses for physics
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const DEFAULT_BANDS = { continuous: 30, short: 60 };   // % of stall (ISL Products)
+
+  // k identical motors on one gearbox input: stall torque k·Ts, same no-load speed (§3.1).
+  function motor(o) {
+    const k = o.k || 1, Ts = k * o.Ts, w0 = o.w0;
+    return { k, Ts, w0, Pmax: Ts * w0 / 4, TatPmax: Ts / 2, wAtPmax: w0 / 2 };
+  }
+  // Motor torque available at speed w on the line T = Ts(1 − w/w0).
+  const torqueAt = (m, w) => m.Ts * (1 - w / m.w0);
+  const speedAt = (m, T) => m.w0 * (1 - T / m.Ts);
+  const powerAt = (m, T) => T * speedAt(m, T);
+
+  // Overall ratio and efficiency: products over the stages (§3.2).
+  function gearing(stages) {
+    let i = 1, eta = 1;
+    for (const s of stages) { i *= s.ratio; eta *= (s.efficiency == null ? 1 : s.efficiency); }
+    return { i, eta };
+  }
+
+  // Load torque at the output (§3.2). r in m, F in N, m in kg.
+  function loadTorque(o) {
+    if (o.type === 'force') return o.F * o.r;
+    if (o.type === 'lift') return o.m * G * o.r;
+    return o.T;
+  }
+
+  function dutyBand(pct, bands) {
+    const b = bands || DEFAULT_BANDS;
+    if (!isNum(pct)) return null;
+    if (pct >= 100) return 'stalled';
+    return pct <= b.continuous ? 'continuous' : pct <= b.short ? 'short' : 'avoid';
+  }
+
+  // Operating point (§3.2). o: { Ts, w0, k, i, eta, TL, r (optional, for linear speed), bands }
+  function operate(o) {
+    const m = motor(o);
+    const Tm = o.TL / (o.i * o.eta);
+    const pct = Tm / m.Ts * 100;
+    const stalled = Tm >= m.Ts;
+    const wm = stalled ? 0 : speedAt(m, Tm);
+    const wout = wm / o.i;
+    const res = {
+      motor: m, Tm, pct, stalled, wm, wout,
+      Pout: o.TL * wout, Pmech: Tm * wm,
+      band: stalled ? 'stalled' : dutyBand(pct, o.bands),
+    };
+    if (isNum(o.r)) res.v = wout * o.r;
+    return res;
+  }
+
+  // Ratio for a target output speed under load (§3.3):
+  //   w_out·i² − w0·i + w0·T_L/(η·Ts) = 0
+  // Returns both roots; i_high keeps the motor below half its stall torque.
+  function solveRatio(o) {
+    const m = motor(o);
+    const a = o.wTarget, b = -m.w0, c = m.w0 * o.TL / (o.eta * m.Ts);
+    const D = b * b - 4 * a * c;
+    const out = { a, b, c, D, feasible: D >= 0, iHigh: null, iLow: null };
+    if (D < 0 || !(a > 0)) return out;
+    const sq = Math.sqrt(D);
+    out.iHigh = (m.w0 + sq) / (2 * a);
+    out.iLow = (m.w0 - sq) / (2 * a);
+    if (!(out.iLow > 1e-12)) out.iLow = null;           // T_L = 0 gives a zero root: not a ratio
+    out.pctHigh = o.TL / (out.iHigh * o.eta) / m.Ts * 100;
+    out.pctLow = out.iLow ? o.TL / (out.iLow * o.eta) / m.Ts * 100 : null;
+    return out;
+  }
+
+  // Current and efficiency (§3.5). Per-motor current rises linearly with that motor's torque;
+  // with k motors each carries T_m/k. Torque constant k_t = Ts/(Is − I0) for one motor.
+  function electrical(o) {
+    const k = o.k || 1;
+    const perT = o.Tm / k;
+    const Iper = o.I0 + (o.Is - o.I0) * perT / o.Ts;
+    const I = k * Iper;
+    const Pin = o.V * I;
+    const Pmech = o.Tm * o.wm;
+    return { I, Iper, Pin, Pmech, eff: Pin > 0 ? Pmech / Pin : null, kt: o.Ts / (o.Is - o.I0) };
+  }
+
+  // Nearest two-gear pair (whole teeth) to a ratio, for rounding a recommendation.
+  function nearestPair(ratio, zMin, zMax) {
+    zMin = zMin || 10; zMax = zMax || 100;
+    let best = null;
+    for (let z1 = zMin; z1 <= zMax; z1++) {
+      const z2 = Math.round(ratio * z1);
+      if (z2 < zMin || z2 > zMax) continue;
+      const err = Math.abs(z2 / z1 - ratio);
+      if (!best || err < best.err - 1e-12) best = { z1, z2, ratio: z2 / z1, err };
+    }
+    return best;
+  }
+
+  const rpmToRad = n => n * 2 * Math.PI / 60;
+  const radToRpm = w => w * 60 / (2 * Math.PI);
+
+  return { G, DEFAULT_BANDS, motor, torqueAt, speedAt, powerAt, gearing, loadTorque, dutyBand, operate, solveRatio, electrical, nearestPair, rpmToRad, radToRpm };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = MotorCore;
+/* END vendor:motor-core.js */
+/* BEGIN vendor:shell.js */
+// ecosystem/shell/shell.js v1.0.0
+// Shared tool frame for the Engineered by the Numbers tools (spec 00 §2–8):
+// header, footer, help, themes, small-screen notice, predict-first, show the
+// working, field validation, save/load, PNG export, printable report, the
+// prediction log store, settings and Clear my data. A tool supplies its
+// inputs, calculation, drawing and readouts through the config passed to
+// Shell.create(). Needs PredictionLog and Schemas defined first.
+const Shell = (function () {
+  'use strict';
+  const req = (a, b) => { try { return require(a); } catch (e) { return require(b); } };
+  const PL = typeof PredictionLog !== 'undefined' ? PredictionLog : req('./prediction-log.js', '../prediction-log.js');
+  const SC = typeof Schemas !== 'undefined' ? Schemas : req('./schemas.js', '../schemas.js');
+
+  /* =================================================================
+     PURE HELPERS (unit-tested in Node)
+     ================================================================= */
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+
+  // Significant-figure display (00 §3). Keeps trailing zeros ("4.10"), groups
+  // thousands, uses a true minus sign, never prints NaN or Infinity.
+  function fmtSig(v, sig) {
+    sig = sig || 3;
+    if (!isNum(v)) return '—';
+    if (v === 0 || Object.is(v, -0)) return '0';
+    const a = Math.abs(v);
+    let s;
+    if (a >= 1e7 || a < 1e-4) {
+      const [m, e] = v.toExponential(sig - 1).split('e');
+      s = m + ' × 10' + String(Number(e)).split('').map(c => SUP[c] || c).join('');
+    } else {
+      // Round first so 99.96 at 3 s.f. becomes 100 (not "100.0").
+      const r = Number(v.toPrecision(sig));
+      const digitsBefore = Math.floor(Math.log10(Math.abs(r))) + 1;
+      const decimals = Math.max(0, sig - digitsBefore);
+      s = Math.abs(r).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+      if (r < 0) s = '-' + s;
+    }
+    return s.replace(/^-/, '−');
+  }
+  // Plain number for an input box: up to 6 significant figures, no grouping.
+  function fmtInput(v) { return isNum(v) ? String(Number(v.toPrecision(6))) : ''; }
+  function fmtPct(p, sig) {
+    if (!isNum(p)) return 'not defined';
+    return (p > 0 ? '+' : '') + fmtSig(p, sig) + '%';
+  }
+
+  // Accepts "1,000", "1 000", "−3", ".5". Returns NaN for anything else.
+  function parseNumber(str) {
+    if (typeof str === 'number') return str;
+    const s = String(str == null ? '' : str).trim().replace(/[−–]/g, '-').replace(/(\d)[,\s](?=\d{3}(\D|$))/g, '$1');
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s)) return NaN;
+    return Number(s);
+  }
+
+  // Field validation (00 §8). spec: { name, unit, min, max, gt (exclusive lower bound),
+  // integer, check(v) -> message|null }. Returns { value, error }.
+  function validateNumber(raw, spec) {
+    const name = spec.name || 'This value';
+    const u = spec.unit ? ' ' + spec.unit : '';
+    if (String(raw == null ? '' : raw).trim() === '') return { value: NaN, error: 'Enter a value for ' + lc(name) + '.' };
+    const v = parseNumber(raw);
+    if (!isNum(v)) return { value: NaN, error: name + ' must be a number.' };
+    if (spec.integer && Math.round(v) !== v) return { value: v, error: name + ' must be a whole number.' };
+    if (spec.gt !== undefined && !(v > spec.gt)) return { value: v, error: name + ' must be greater than ' + spec.gt + u + '.' };
+    if (spec.min !== undefined && spec.max !== undefined && (v < spec.min || v > spec.max)) return { value: v, error: name + ' must be between ' + fmtBound(spec.min) + ' and ' + fmtBound(spec.max) + u + '.' };
+    if (spec.min !== undefined && v < spec.min) return { value: v, error: name + ' must be at least ' + fmtBound(spec.min) + u + '.' };
+    if (spec.max !== undefined && v > spec.max) return { value: v, error: name + ' must be at most ' + fmtBound(spec.max) + u + '.' };
+    if (spec.check) { const m = spec.check(v); if (m) return { value: v, error: m }; }
+    return { value: v, error: null };
+  }
+  const fmtBound = v => Math.abs(v) >= 10000 ? v.toLocaleString('en-US') : String(v);
+  const lc = s => s.charAt(0).toLowerCase() + s.slice(1);
+
+  // 00 §6: <name>_<tool>_<challenge or sandbox>_<YYYY-MM-DD>.<ext>
+  function safePart(s) { return String(s || '').trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^[-.]+|[-.]+$/g, ''); }
+  function exportName(o) {
+    const base = [safePart(o.student) || 'unnamed', safePart(o.tool), safePart(o.context) || 'sandbox', o.dateISO].join('_');
+    return o.ext ? base + '.' + o.ext : base;
+  }
+  function localDateISO(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // 00 §4.5 default bands: within 1% "Match", within 5% "Close".
+  function verdictFor(pct, tol) {
+    tol = tol || { match: 1, close: 5 };
+    if (!isNum(pct)) return null;
+    const a = Math.abs(pct);
+    return a <= tol.match ? 'match' : a <= tol.close ? 'close' : 'off';
+  }
+  function predictionMessage(pred, model, unit, sig, reason) {
+    const u = unit ? ' ' + unit : '';
+    if (!isNum(model)) return 'You predicted ' + fmtSig(pred, sig) + u + '. The model value is not defined' + (reason ? ': ' + reason : '') + '.';
+    const pct = PL.pctDiff(pred, model);
+    return 'You predicted ' + fmtSig(pred, sig) + u + '. The model gives ' + fmtSig(model, sig) + u +
+      (pct === null ? ' (difference not defined: the model value is 0).' : ' (' + fmtPct(pct, sig) + ' difference).');
+  }
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const util = { fmtSig, fmtInput, fmtPct, parseNumber, validateNumber, exportName, safePart, localDateISO, verdictFor, predictionMessage, esc };
+
+  /* =================================================================
+     BROWSER FRAME
+     ================================================================= */
+  const FEEDBACK = 'billvanloo.tech+feedback@gmail.com';
+
+  function store(prefix) {
+    return {
+      get(k, dflt) { try { const s = localStorage.getItem(prefix + k); return s == null ? dflt : JSON.parse(s); } catch (e) { return dflt; } },
+      set(k, v) { try { localStorage.setItem(prefix + k, JSON.stringify(v)); } catch (e) { /* storage full or blocked */ } },
+      del(k) { try { localStorage.removeItem(prefix + k); } catch (e) { } },
+      clearAll() { try { Object.keys(localStorage).filter(k => k.indexOf(prefix) === 0).forEach(k => localStorage.removeItem(k)); } catch (e) { } },
+    };
+  }
+  function h(tag, attrs, html) {
+    const el = document.createElement(tag);
+    if (attrs) for (const k in attrs) { if (attrs[k] !== null && attrs[k] !== undefined && attrs[k] !== false) el.setAttribute(k, attrs[k] === true ? '' : attrs[k]); }
+    if (html !== undefined) el.innerHTML = html;
+    return el;
+  }
+  function download(filename, data, type) {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: type || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: filename });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) {
+      const ta = h('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (e2) { }
+      ta.remove(); return ok;
+    }
+  }
+
+  function create(cfg) {
+    const S = store('ebtn:' + cfg.slug + ':');
+    const G = store('ebtn-');                       // shared across tools on one site: name, theme
+    const app = {
+      cfg, util, PL, SC,
+      state: null, el: {},
+      settings: Object.assign({ sig: 3, team: '', classPeriod: '', predictFirst: false }, cfg.defaultSettings || {}, S.get('settings', {})),
+      pf: { revealed: false, fields: {}, messages: [] },
+      invalid: {}, fields: [], log: S.get('log', []),
+      sessionStart: Date.now(), working: [],
+    };
+
+    /* ---------------- state ---------------- */
+    const saved = S.get('state', null);
+    app.state = cfg.defaultState();
+    if (saved && saved.schemaVersion === cfg.schemaVersion && saved.state) {
+      try { app.state = Object.assign(cfg.defaultState(), saved.state); } catch (e) { app.state = cfg.defaultState(); }
+    }
+
+    /* ---------------- skeleton ---------------- */
+    const repoUrl = 'https://github.com/billvanloo/' + cfg.repo;
+    const mail = kind => 'mailto:' + FEEDBACK + '?subject=' + encodeURIComponent('[' + cfg.repo + '] ' + kind);
+    document.body.innerHTML = '';
+    const header = h('header', { class: 'sh-header' },
+      '<div class="titleblock"><span class="t1">' + esc(cfg.tool) + '</span><span class="t2">' + esc(cfg.subtitle || '') + '</span></div>' +
+      '<div id="shModes"></div><div class="spacer"></div>' +
+      '<div class="namewrap"><label for="shName">Name</label><input id="shName" maxlength="40" placeholder="Your name" autocomplete="name"></div>' +
+      '<div class="hbtns">' +
+      '<button id="shPredict" aria-pressed="false" title="Hide results until you enter and check a prediction">Predict first</button>' +
+      '<button id="shPng" title="Download a PNG of the drawing">Export image</button>' +
+      '<button id="shReport" title="Printable report (print to PDF)">Report</button>' +
+      '<button id="shSave" title="Save your design as a file">Save</button>' +
+      '<button id="shLoad" title="Open a saved design or an import file">Load</button>' +
+      '<button id="shLog" title="Your prediction log">Log</button>' +
+      '<button id="shSettings" aria-label="Settings" title="Settings">⚙</button>' +
+      '<button id="shTheme" aria-pressed="false" title="Switch light or dark theme">theme</button>' +
+      '<button id="shHelp" aria-label="Help" title="How to use this tool (?)">?</button>' +
+      '</div><input type="file" id="shFile" accept=".json,.csv,application/json,text/csv" hidden>');
+    const small = h('div', { id: 'shSmall', class: 'sh-small', role: 'note' },
+      '<span>This tool needs a larger screen, at least 1024 px wide, for full use. The readouts still work here.</span><button type="button">Dismiss</button>');
+    const main = h('main', { class: 'sh-main' },
+      '<section id="shInputs" class="sh-col sh-inputs" aria-label="Inputs"></section>' +
+      '<section id="shStage" class="sh-col sh-stage" aria-label="Drawing"></section>' +
+      '<section id="shResults" class="sh-col sh-results" aria-label="Results">' +
+      '<div id="shResultsBody"></div>' +
+      '<div id="shPfBox" class="pfbox" hidden></div>' +
+      '<details id="shWorking" class="working"><summary>Show the working</summary><div id="shWorkingBody"></div></details>' +
+      '</section>');
+    const footer = h('footer', { class: 'sh-footer' },
+      '<span class="foot-by">Designed by <a href="https://billvanloo.com" target="_blank" rel="noopener"><strong>Bill Van Loo</strong></a></span>' +
+      '<span class="foot-ai">Developed using Claude — please don\'t use this tool if you\'re uncomfortable using tools built with AI assistance.</span>' +
+      '<span class="foot-spacer"></span>' +
+      '<a href="' + mail('Bug report') + '">Report a bug</a>' +
+      '<a href="' + mail('Feature request') + '">Request a feature</a>' +
+      '<a href="https://ko-fi.com/billvanloo" target="_blank" rel="noopener">Support on Ko-fi</a>' +
+      '<a href="' + repoUrl + '/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>' +
+      '<a href="' + repoUrl + '" target="_blank" rel="noopener">View source</a>');
+    const live = h('div', { id: 'shLive', class: 'sr-only', role: 'status', 'aria-live': 'polite' });
+    const desc = h('div', { id: 'shDesc', class: 'sr-only', 'aria-live': 'polite' });
+    const toastEl = h('div', { id: 'shToast', class: 'sh-toast', role: 'status', 'aria-live': 'polite' });
+    const report = h('div', { id: 'sh-report' });
+    [header, small, main, footer, live, desc, toastEl, report].forEach(e => document.body.appendChild(e));
+    const $ = id => document.getElementById(id);
+    app.el = { inputs: $('shInputs'), stage: $('shStage'), results: $('shResultsBody'), pf: $('shPfBox'), working: $('shWorkingBody'), workingBox: $('shWorking') };
+
+    /* ---------------- dialogs ---------------- */
+    function dialog(id, title) {
+      const d = h('dialog', { id, class: 'sh-dlg', 'aria-labelledby': id + 'T' },
+        '<div class="dlg-h"><h2 id="' + id + 'T">' + esc(title) + '</h2><button class="btn small" data-close>Close</button></div><div class="dlg-b"></div>');
+      d.querySelector('[data-close]').addEventListener('click', () => d.close());
+      d.addEventListener('click', e => { if (e.target === d) d.close(); });
+      document.body.appendChild(d);
+      return { dlg: d, body: d.querySelector('.dlg-b') };
+    }
+    const helpD = dialog('shHelpDlg', 'How to use the ' + cfg.tool);
+    const logD = dialog('shLogDlg', 'Prediction log');
+    const setD = dialog('shSettingsDlg', 'Settings');
+
+    /* ---------------- toast, live regions ---------------- */
+    let toastT = 0;
+    app.toast = (msg, ms) => {
+      toastEl.textContent = msg; toastEl.classList.add('on');
+      clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('on'), ms || 3500);
+    };
+    app.announce = msg => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
+    let descT = 0, lastDesc = '';
+    app.describe = text => {
+      if (text === lastDesc) return;
+      lastDesc = text; clearTimeout(descT);
+      descT = setTimeout(() => { desc.textContent = text; }, 450);
+    };
+
+    /* ---------------- theme ---------------- */
+    const curTheme = () => document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    function syncTheme() {
+      const t = curTheme();
+      $('shTheme').textContent = t === 'light' ? '☾ Dark' : '☀ Light';
+      $('shTheme').setAttribute('aria-pressed', t === 'dark' ? 'true' : 'false');
+    }
+    $('shTheme').addEventListener('click', () => {
+      const next = curTheme() === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      G.set('theme', next);
+      syncTheme(); render();
+    });
+    // Palette for drawings, read from the CSS tokens.
+    const PAL_KEYS = ['paper', 'grid-minor', 'grid-major', 'ink', 'ink-soft', 'line', 'steel', 'steel-edge', 'dykem', 'dykem-soft', 'brass', 'brass-ink', 'pass', 'fail', 'warn', 'pos-fill', 'neg-fill', 'field', 'panel', 'badge-text'];
+    app.pal = () => {
+      const cs = getComputedStyle(document.documentElement), p = {};
+      PAL_KEYS.forEach(k => { p[k.replace(/-(\w)/g, (m, c) => c.toUpperCase())] = cs.getPropertyValue('--' + k).trim(); });
+      p.fontUi = cs.getPropertyValue('--font-ui').trim(); p.fontMono = cs.getPropertyValue('--font-mono').trim();
+      return p;
+    };
+    // Exports and reports are always ink on paper (00 §2).
+    app.withLight = fn => {
+      const root = document.documentElement, prev = root.getAttribute('data-theme');
+      root.setAttribute('data-theme', 'light');
+      try { return fn(); } finally { root.setAttribute('data-theme', prev || 'light'); }
+    };
+
+    /* ---------------- formatting ---------------- */
+    app.fmt = v => fmtSig(v, app.settings.sig);
+    app.fmtU = (v, unit) => isNum(v) ? fmtSig(v, app.settings.sig) + (unit ? ' ' + unit : '') : '—';
+
+    /* ---------------- name ---------------- */
+    const nameEl = $('shName');
+    nameEl.value = G.get('name', '') || '';
+    nameEl.addEventListener('input', () => G.set('name', nameEl.value));
+    app.student = () => nameEl.value.trim();
+
+    /* ---------------- small screen ---------------- */
+    if (G.get('smallDismissed', false)) small.hidden = true;
+    small.querySelector('button').addEventListener('click', () => { small.hidden = true; G.set('smallDismissed', true); });
+
+    /* ---------------- modes ---------------- */
+    if (cfg.modes) {
+      const box = $('shModes');
+      box.className = 'modes'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', cfg.modes.label || 'Mode');
+      cfg.modes.options.forEach(o => {
+        const b = h('button', { type: 'button', 'data-mode': o.id, 'aria-pressed': 'false' }, esc(o.label));
+        b.addEventListener('click', () => { cfg.modes.set(app, o.id); app.changed(); });
+        box.appendChild(b);
+      });
+    }
+    function syncModes() {
+      if (!cfg.modes) return;
+      const cur = cfg.modes.get(app);
+      document.querySelectorAll('#shModes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === cur ? 'true' : 'false'));
+    }
+
+    /* =================================================================
+       FIELDS
+       ================================================================= */
+    // Numeric input row. o: { id, label, unit, name, get(app), set(app, v), min, max, gt, integer,
+    // check(v, app), step, help, parent }
+    app.numField = (parent, o) => {
+      const row = h('div', { class: 'fld' });
+      const errId = o.id + 'Err';
+      row.innerHTML = '<label for="' + o.id + '">' + o.label + '</label>' +
+        '<span class="ctl"><input type="text" inputmode="decimal" id="' + o.id + '" aria-describedby="' + errId + '" autocomplete="off">' +
+        (o.unit ? '<span class="unit">' + esc(o.unit) + '</span>' : '') + '</span>' +
+        '<div class="err" id="' + errId + '" role="alert"></div>';
+      const input = row.querySelector('input'), err = row.querySelector('.err');
+      const spec = () => ({ name: o.name || o.label.replace(/<[^>]+>/g, ''), unit: o.unit, min: typeof o.min === 'function' ? o.min(app) : o.min, max: typeof o.max === 'function' ? o.max(app) : o.max, gt: o.gt, integer: o.integer, check: o.check ? v => o.check(v, app) : null });
+      function commit() {
+        const r = validateNumber(input.value, spec());
+        if (r.error) {
+          err.textContent = r.error; input.setAttribute('aria-invalid', 'true'); app.invalid[o.id] = r.error;
+        } else {
+          err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id];
+          o.set(app, r.value);
+        }
+        app.changed();
+      }
+      input.addEventListener('input', commit);
+      input.addEventListener('keydown', e => {
+        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && o.step) {
+          e.preventDefault();
+          const cur = parseNumber(input.value);
+          const base = isNum(cur) ? cur : o.get(app);
+          const d = (e.key === 'ArrowUp' ? 1 : -1) * o.step * (e.shiftKey ? 10 : 1);
+          input.value = fmtInput(Number((base + d).toFixed(10)));
+          commit();
+        }
+      });
+      const field = {
+        o, input, err, row,
+        sync() {
+          if (document.activeElement === input || app.invalid[o.id]) return;
+          const v = o.get(app); const s = fmtInput(v);
+          if (input.value !== s && parseNumber(input.value) !== v) input.value = s;
+          else if (input.value === '' && s !== '') input.value = s;
+        },
+        revalidate() { if (input.value !== '') { const r = validateNumber(input.value, spec()); if (r.error && !app.invalid[o.id]) { err.textContent = r.error; input.setAttribute('aria-invalid', 'true'); app.invalid[o.id] = r.error; } else if (!r.error && app.invalid[o.id]) { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; o.set(app, r.value); } } },
+        reset() { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; input.value = fmtInput(o.get(app)); },
+      };
+      input.value = fmtInput(o.get(app));
+      app.fields.push(field);
+      parent.appendChild(row);
+      return field;
+    };
+    // Select row. o: { id, label, options: [[value, label]] or fn(app), get, set }
+    app.selectField = (parent, o) => {
+      const row = h('div', { class: 'fld' });
+      row.innerHTML = '<label for="' + o.id + '">' + o.label + '</label><span class="ctl"><select id="' + o.id + '"></select></span>';
+      const sel = row.querySelector('select');
+      const fill = () => {
+        const opts = typeof o.options === 'function' ? o.options(app) : o.options;
+        const html = opts.map(([v, l]) => '<option value="' + esc(v) + '">' + esc(l) + '</option>').join('');
+        if (sel.innerHTML !== html) sel.innerHTML = html;
+        sel.value = String(o.get(app));
+      };
+      fill();
+      sel.addEventListener('change', () => { o.set(app, sel.value); app.changed(); });
+      const field = { o, input: sel, row, sync: fill, reset: fill, revalidate() { } };
+      app.fields.push(field);
+      parent.appendChild(row);
+      return field;
+    };
+    app.checkField = (parent, o) => {
+      const row = h('label', { class: 'chk' }, '<input type="checkbox" id="' + o.id + '"> ' + o.label);
+      const cb = row.querySelector('input');
+      cb.checked = !!o.get(app);
+      cb.addEventListener('change', () => { o.set(app, cb.checked); app.changed(); });
+      const field = { o, input: cb, row, sync() { cb.checked = !!o.get(app); }, reset() { cb.checked = !!o.get(app); }, revalidate() { } };
+      app.fields.push(field);
+      parent.appendChild(row);
+      return field;
+    };
+    app.removeFields = container => { app.fields = app.fields.filter(f => { if (container.contains(f.row)) { delete app.invalid[f.o.id]; return false; } return true; }); };
+    app.hasInvalid = () => Object.keys(app.invalid).length > 0;
+    app.invalidReason = () => 'not defined: fix the highlighted input' + (Object.keys(app.invalid).length > 1 ? 's' : '');
+
+    /* =================================================================
+       PREDICT FIRST (00 §4)
+       ================================================================= */
+    const pfOn = () => !!app.settings.predictFirst;
+    app.masked = () => pfOn() && !app.pf.revealed;
+    // Wrap a readout value: shows a blank box while hidden.
+    app.show = (text) => app.masked() ? '<span class="masked" aria-label="hidden until you check your prediction">?</span>' : text;
+    function clearPrediction() { app.pf.revealed = false; app.pf.fields = {}; app.pf.messages = []; }
+    $('shPredict').addEventListener('click', () => {
+      app.settings.predictFirst = !pfOn(); saveSettings(); clearPrediction(); render();
+      app.announce(pfOn() ? 'Predict first is on. Results are hidden until you check a prediction.' : 'Predict first is off.');
+    });
+    function problemId() { return cfg.problemId ? cfg.problemId(app) : PL.sandboxProblemId(snapshot().values); }
+    function snapshot() { return cfg.inputsSnapshot ? cfg.inputsSnapshot(app) : { values: {}, units: {} }; }
+    function renderPf() {
+      const box = app.el.pf;
+      $('shPredict').setAttribute('aria-pressed', pfOn() ? 'true' : 'false');
+      if (!pfOn()) { box.hidden = true; return; }
+      box.hidden = false;
+      const targets = cfg.predictTargets(app);
+      const blocked = app.hasInvalid();
+      let html = '<h3>Predict first</h3>';
+      if (!app.pf.revealed) {
+        html += '<p class="note">Enter your predictions, then press Check. Results stay hidden until you do.</p>';
+        targets.forEach(t => {
+          const id = 'shPf_' + t.key;
+          html += '<div class="pfrow"><label for="' + id + '">' + t.label + '</label><input type="text" inputmode="decimal" id="' + id + '" data-key="' + esc(t.key) + '" value="' + esc(app.pf.fields[t.key] || '') + '" autocomplete="off"><span class="unit">' + esc(t.unit || '') + '</span></div>';
+        });
+        html += '<div class="btnrow"><button class="btn primary" id="shCheck" type="button"' + (blocked ? ' disabled' : '') + '>Check</button></div>';
+        if (blocked) html += '<p class="note warn">Fix the highlighted input before checking.</p>';
+      } else {
+        app.pf.messages.forEach(m => { html += '<div class="pfmsg ' + (m.verdict || '') + '">' + m.html + '</div>'; });
+        html += '<div class="btnrow"><button class="btn" id="shAgain" type="button">Predict again</button></div>';
+      }
+      box.innerHTML = html;
+      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('input', () => { app.pf.fields[inp.dataset.key] = inp.value; }));
+      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') check(); }));
+      const c = $('shCheck'); if (c) c.addEventListener('click', check);
+      const a = $('shAgain'); if (a) a.addEventListener('click', () => { clearPrediction(); render(); const f = box.querySelector('input'); if (f) f.focus(); });
+    }
+    function check() {
+      if (app.hasInvalid()) return;
+      const targets = cfg.predictTargets(app);
+      const student = app.student() || 'unnamed';
+      const pid = problemId(), snap = snapshot();
+      const msgs = [], recs = [];
+      for (const t of targets) {
+        const raw = app.pf.fields[t.key];
+        if (raw === undefined || String(raw).trim() === '') continue;
+        const p = parseNumber(raw);
+        if (!isNum(p)) { app.toast(t.label.replace(/<[^>]+>/g, '') + ': enter a number.'); document.getElementById('shPf_' + t.key).focus(); return; }
+        const model = isNum(t.model) ? t.model : null;
+        const rec = PL.makeRecord({
+          tool: cfg.tool, toolVersion: cfg.version, student, team: app.settings.team, classPeriod: app.settings.classPeriod,
+          problemId: pid, quantity: t.quantity || t.key, unit: t.unit || '', predicted: p, model,
+          attempt: PL.nextAttempt(app.log, student, pid, t.quantity || t.key), inputs: snap,
+        });
+        recs.push(rec);
+        const v = verdictFor(rec.pctPredVsModel, cfg.tolerance);
+        const tag = v === 'match' ? ' <span class="pftag match">Match</span>' : v === 'close' ? ' <span class="pftag close">Close</span>' : '';
+        msgs.push({ verdict: v === 'match' ? 'match' : v === 'close' ? 'close' : '', html: '<b>' + t.label + '</b>' + tag + '<br>' + esc(predictionMessage(p, model, t.unit, app.settings.sig, t.reason)) });
+      }
+      if (!recs.length) msgs.push({ html: 'No prediction was entered, so nothing was logged. The results are shown below.' });
+      app.log = app.log.concat(recs); saveLog();
+      app.pf.revealed = true; app.pf.messages = msgs;
+      render();
+      app.announce(msgs.map(m => m.html.replace(/<[^>]+>/g, ' ')).join(' '));
+      const again = $('shAgain'); if (again) again.focus();
+    }
+    app.check = check;
+
+    /* =================================================================
+       SHOW THE WORKING (00 §5)
+       ================================================================= */
+    app.setWorking = steps => { app.working = steps || []; };
+    function renderWorking() {
+      const body = app.el.working;
+      if (app.masked()) { body.innerHTML = '<p class="note" style="padding:8px 10px">Hidden until you check your prediction.</p>'; return; }
+      if (app.hasInvalid()) { body.innerHTML = '<p class="note" style="padding:8px 10px">' + esc(app.invalidReason()) + '.</p>'; return; }
+      if (!app.working.length) { body.innerHTML = '<p class="note" style="padding:8px 10px">Nothing to show yet.</p>'; return; }
+      body.innerHTML = '<ol class="wk">' + app.working.map(s =>
+        '<li><div class="wt">' + s.title + '</div>' +
+        (s.formula ? '<div class="wf">' + s.formula + '</div>' : '') +
+        (s.sub ? '<div class="ws">= ' + s.sub + '</div>' : '') +
+        (s.result ? '<div class="wr">= ' + s.result + '</div>' : '') +
+        (s.note ? '<div class="note">' + s.note + '</div>' : '') +
+        (s.source ? '<div class="wsrc">Source: ' + esc(s.source) + '</div>' : '') + '</li>').join('') + '</ol>';
+    }
+
+    /* =================================================================
+       RENDER CYCLE
+       ================================================================= */
+    let saveT = 0;
+    function saveState() { clearTimeout(saveT); saveT = setTimeout(() => S.set('state', { schemaVersion: cfg.schemaVersion, state: cfg.getState ? cfg.getState(app) : app.state }), 250); }
+    function saveSettings() { S.set('settings', app.settings); }
+    function saveLog() { S.set('log', app.log); }
+    function render() {
+      syncModes();
+      app.fields.forEach(f => f.sync());
+      cfg.render(app);
+      renderPf();
+      renderWorking();
+    }
+    app.render = render;
+    // Call after any input change (00 §4.4: hides results and clears predictions).
+    app.changed = (opts) => {
+      if (!(opts && opts.keepPrediction) && pfOn()) clearPrediction();
+      saveState(); render();
+    };
+    app.refreshFields = () => { app.fields.forEach(f => f.reset()); };
+
+    /* =================================================================
+       SAVE / LOAD / IMPORT (00 §6)
+       ================================================================= */
+    function context() { return cfg.context ? cfg.context(app) : 'sandbox'; }
+    app.fileName = ext => exportName({ student: app.student(), tool: cfg.slug, context: context(), dateISO: localDateISO(), ext });
+    $('shSave').addEventListener('click', () => {
+      const f = SC.makeDesignFile({ tool: cfg.tool, toolVersion: cfg.version, schemaVersion: cfg.schemaVersion }, cfg.getState ? cfg.getState(app) : app.state);
+      f.student = app.student();
+      download(app.fileName('json'), JSON.stringify(f, null, 2), 'application/json');
+      app.toast('Saved ' + app.fileName('json'));
+    });
+    $('shLoad').addEventListener('click', () => app.openFile());
+    app.openFile = () => { $('shFile').value = ''; $('shFile').click(); };
+    $('shFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) readFile(f); });
+    document.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+    document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) { e.preventDefault(); readFile(e.dataTransfer.files[0]); } });
+    function readFile(file) {
+      const r = new FileReader();
+      r.onload = () => app.loadText(String(r.result), file.name);
+      r.onerror = () => app.toast('That file could not be read.', 6000);
+      r.readAsText(file);
+    }
+    app.loadText = (text, name) => {
+      try {
+        const kind = /\.csv$/i.test(name || '') ? 'prediction-log' : SC.kindOf(text);
+        if (kind === 'design') {
+          const res = SC.readDesignFile(text, { tool: cfg.tool, schemaVersion: cfg.schemaVersion, migrate: cfg.migrate });
+          app.state = Object.assign(cfg.defaultState(), res.value.state);
+          if (cfg.afterLoad) cfg.afterLoad(app);
+          app.invalid = {};
+          clearPrediction(); app.refreshFields(); saveState(); render();
+          app.toast(res.warnings.length ? res.warnings.join(' ') : 'Loaded ' + (name || 'design') + '.', res.warnings.length ? 8000 : 3500);
+          return { ok: true, warnings: res.warnings };
+        }
+        if (kind === 'prediction-log') {
+          const res = PL.parseFile(name || 'log.json', text);
+          const d = PL.dedupe(app.log.concat(res.records));
+          const added = d.records.length - app.log.length;
+          app.log = d.records; saveLog();
+          app.toast('Added ' + added + ' prediction record' + (added === 1 ? '' : 's') + ' to your log.' + (res.warnings.length ? ' Note: ' + res.warnings.join(' ') : ''), 6000);
+          return { ok: true };
+        }
+        if (kind && cfg.imports && cfg.imports[kind]) { cfg.imports[kind](app, text, name); return { ok: true }; }
+        throw new Error(kind ? 'The ' + cfg.tool + ' cannot open a ' + kind + ' file.' : 'This file is not a design, import or prediction log this tool can read.');
+      } catch (err) {
+        app.toast(err.message, 8000);
+        return { ok: false, error: err.message };
+      }
+    };
+    app.download = download;
+
+    /* =================================================================
+       EXPORT IMAGE (00 §6): 2× PNG, ink on paper, caption strip
+       ================================================================= */
+    function drawingForExport() { return app.withLight(() => cfg.drawing(app, { export: true })); }
+    function captionText() {
+      return 'Name: ' + (app.student() || 'unnamed') + '   ·   ' + cfg.tool + '   ·   ' + (cfg.contextLabel ? cfg.contextLabel(app) : 'Sandbox') + '   ·   ' + localDateISO();
+    }
+    app.exportImage = () => new Promise((resolve, reject) => {
+      const d = drawingForExport();
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = 2, capH = 40, W = d.width, H = d.height + capH;
+          const c = document.createElement('canvas'); c.width = W * scale; c.height = H * scale;
+          const x = c.getContext('2d'); x.scale(scale, scale);
+          x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, W, H);
+          x.drawImage(img, 0, 0, d.width, d.height);
+          x.strokeStyle = '#23272C'; x.lineWidth = 1.5; x.beginPath(); x.moveTo(0, d.height + 0.75); x.lineTo(W, d.height + 0.75); x.stroke();
+          x.fillStyle = '#23272C'; x.font = '600 13px "Avenir Next","Segoe UI",sans-serif'; x.textBaseline = 'middle';
+          x.fillText(captionText(), 12, d.height + capH / 2);
+          c.toBlob(blob => { download(app.fileName('png'), blob); resolve({ width: c.width, height: c.height }); }, 'image/png');
+        } catch (e) { app.toast('The image could not be exported in this browser.', 6000); reject(e); }
+      };
+      img.onerror = () => { app.toast('The image could not be exported in this browser.', 6000); reject(new Error('svg load failed')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.svg);
+    });
+    $('shPng').addEventListener('click', () => { app.exportImage().catch(() => { }); });
+
+    /* =================================================================
+       REPORT (00 §6): printable page
+       ================================================================= */
+    app.buildReport = () => {
+      const d = drawingForExport();
+      const r = cfg.report(app);
+      const rows = list => list.map(([k, v]) => '<tr><th style="width:45%">' + k + '</th><td class="mono">' + v + '</td></tr>').join('');
+      const session = app.log.filter(x => Date.parse(x.timestamp) >= app.sessionStart - 1000);
+      const wk = app.masked() ? '<p>Hidden until the prediction is checked.</p>' : app.working.length ? '<table><tr class="hd"><th>#</th><th>Step</th><th>Formula</th><th>With numbers</th><th>Result</th><th>Source</th></tr>' +
+        app.working.map((s, i) => '<tr><td>' + (i + 1) + '</td><td>' + s.title + '</td><td class="mono">' + (s.formula || '') + '</td><td class="mono">' + (s.sub || '') + '</td><td class="mono">' + (s.result || '') + '</td><td>' + esc(s.source || '') + '</td></tr>').join('') + '</table>' : '<p>Nothing to show.</p>';
+      const hist = session.length ? '<table><tr class="hd"><th>Time</th><th>Quantity</th><th>Predicted</th><th>Model</th><th>Difference</th><th>Attempt</th></tr>' +
+        session.map(x => '<tr><td>' + esc(x.timestamp.slice(11, 19)) + '</td><td>' + esc(x.quantity) + '</td><td class="mono">' + fmtSig(x.predicted, app.settings.sig) + ' ' + esc(x.unit) + '</td><td class="mono">' + (x.model === null ? 'not defined' : fmtSig(x.model, app.settings.sig) + ' ' + esc(x.unit)) + '</td><td class="mono">' + fmtPct(x.pctPredVsModel, app.settings.sig) + '</td><td>' + x.attempt + '</td></tr>').join('') + '</table>' : '<p>No predictions checked this session.</p>';
+      const sources = (cfg.help && cfg.help.sources || []).map(s => '<li>' + esc(s.title) + (s.url ? ': ' + esc(s.url) : '') + '</li>').join('');
+      report.innerHTML = '<div class="rb"><h1>' + esc(cfg.tool) + ' — Report</h1><div class="sub">' + esc(cfg.subtitle || '') + '</div>' +
+        '<table><tr class="hd"><th>Name</th><th>Date</th><th>Mode</th><th>Tool version</th></tr><tr><td>' + esc(app.student() || 'unnamed') + '</td><td>' + localDateISO() + '</td><td>' + esc(cfg.contextLabel ? cfg.contextLabel(app) : 'Sandbox') + '</td><td>' + esc(cfg.version) + '</td></tr></table>' +
+        '<div class="fig">' + d.svg + '</div>' +
+        '<h2>Inputs</h2><table>' + rows(r.inputs) + '</table>' +
+        '<h2>Results</h2><table>' + rows(r.outputs) + '</table>' +
+        (r.notes && r.notes.length ? '<h2>Notes</h2><ul>' + r.notes.map(n => '<li>' + n + '</li>').join('') + '</ul>' : '') +
+        '<h2>Show the working</h2>' + wk +
+        '<h2>Prediction history (this session)</h2>' + hist +
+        '<h2>Sources</h2><ol>' + sources + '</ol>' +
+        '<div class="sig"><span>Student signature</span><span>Teacher check</span></div></div>';
+      return report;
+    };
+    $('shReport').addEventListener('click', () => {
+      app.buildReport();
+      const prev = document.title;
+      document.title = app.fileName('');
+      document.title = document.title.replace(/\.$/, '');
+      const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
+      window.addEventListener('afterprint', restore);
+      window.print();
+      setTimeout(restore, 1500);
+    });
+
+    /* =================================================================
+       PREDICTION LOG DIALOG (07 §3.3)
+       ================================================================= */
+    function renderLog() {
+      const b = logD.body, sig = app.settings.sig;
+      const recs = app.log.map((r, i) => ({ r, i })).reverse();
+      b.innerHTML = '<p>Every Check in predict-first mode adds a row here. You can add a measured lab value and a note to any row. Records stay in this browser until you clear them in Settings.</p>' +
+        '<div class="btnrow"><button class="btn" id="shLogJson">Export JSON</button><button class="btn" id="shLogCsv">Export CSV</button><button class="btn" id="shLogCopy">Copy last row</button></div>' +
+        (recs.length ? '<div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Problem</th><th>Quantity</th><th>Predicted</th><th>Model</th><th>Diff.</th><th>Try</th><th>Measured</th><th>Note</th></tr></thead><tbody>' +
+          recs.map(({ r, i }) => '<tr><td>' + esc(r.timestamp.slice(5, 16).replace('T', ' ')) + '</td><td>' + esc(r.problemId) + '</td><td>' + esc(r.quantity) + '</td><td>' + fmtSig(r.predicted, sig) + ' ' + esc(r.unit) + '</td><td>' + (r.model === null ? 'not defined' : fmtSig(r.model, sig)) + '</td><td>' + fmtPct(r.pctPredVsModel, sig) + '</td><td>' + r.attempt + '</td>' +
+            '<td><input data-i="' + i + '" data-f="measured" inputmode="decimal" aria-label="Measured value for ' + esc(r.quantity) + '" value="' + (r.measured === null ? '' : r.measured) + '"></td>' +
+            '<td><input data-i="' + i + '" data-f="note" aria-label="Note for ' + esc(r.quantity) + '" maxlength="200" value="' + esc(r.note) + '"></td></tr>').join('') + '</tbody></table></div>'
+          : '<p class="note">No predictions yet. Turn on Predict first, enter a prediction and press Check.</p>');
+      b.querySelectorAll('input[data-i]').forEach(inp => inp.addEventListener('change', () => {
+        const i = +inp.dataset.i, f = inp.dataset.f;
+        if (f === 'measured') { const v = inp.value.trim() === '' ? null : parseNumber(inp.value); if (v !== null && !isNum(v)) { app.toast('Measured value must be a number.'); return; } app.log[i] = PL.annotate(app.log[i], { measured: v }); }
+        else app.log[i] = PL.annotate(app.log[i], { note: inp.value });
+        saveLog(); renderLog();
+      }));
+      const logName = ext => exportName({ student: app.student(), tool: cfg.slug, context: 'prediction-log', dateISO: localDateISO(), ext });
+      $('shLogJson').addEventListener('click', () => download(logName('json'), JSON.stringify(PL.toJSON(app.log), null, 2), 'application/json'));
+      $('shLogCsv').addEventListener('click', () => download(logName('csv'), PL.toCSV(app.log), 'text/csv;charset=utf-8'));
+      $('shLogCopy').addEventListener('click', async () => {
+        if (!app.log.length) { app.toast('The log is empty.'); return; }
+        const ok = await copyText(PL.toTSVRow(app.log[app.log.length - 1]));
+        app.toast(ok ? 'Copied the last row. Paste it into your class spreadsheet.' : 'Copy did not work in this browser. Use Export CSV instead.');
+      });
+    }
+    $('shLog').addEventListener('click', () => { renderLog(); logD.dlg.showModal(); });
+
+    /* =================================================================
+       SETTINGS, CLEAR MY DATA
+       ================================================================= */
+    function renderSettings() {
+      const b = setD.body;
+      b.innerHTML = '<h3>Numbers</h3><div class="fld"><label for="shSig">Significant figures shown</label><span class="ctl"><select id="shSig"><option value="3">3</option><option value="4">4</option></select></span></div>' +
+        '<p class="note">Calculations are never rounded; this only changes the display.</p>' +
+        '<h3>Your class</h3><div class="fld"><label for="shTeam">Team (optional)</label><span class="ctl"><input type="text" id="shTeam" maxlength="40" style="text-align:left"></span></div>' +
+        '<div class="fld"><label for="shPeriod">Class period (optional)</label><span class="ctl"><input type="text" id="shPeriod" maxlength="20" style="text-align:left"></span></div>' +
+        '<div id="shSetExtra"></div>' +
+        '<h3>Your data</h3><p>Your name, current design, predictions and settings are kept in this browser only.</p>' +
+        '<div class="btnrow"><button class="btn danger" id="shClear">Clear my data</button></div><p class="note" id="shClearMsg"></p>';
+      $('shSig').value = String(app.settings.sig);
+      $('shSig').addEventListener('change', () => { app.settings.sig = +$('shSig').value; saveSettings(); render(); });
+      $('shTeam').value = app.settings.team; $('shPeriod').value = app.settings.classPeriod;
+      $('shTeam').addEventListener('input', () => { app.settings.team = $('shTeam').value; saveSettings(); });
+      $('shPeriod').addEventListener('input', () => { app.settings.classPeriod = $('shPeriod').value; saveSettings(); });
+      if (cfg.settingsExtra) cfg.settingsExtra(app, $('shSetExtra'));
+      let armed = false;
+      $('shClear').addEventListener('click', () => {
+        if (!armed) { armed = true; $('shClear').textContent = 'Click again to clear everything'; $('shClearMsg').textContent = 'This removes your name, design, prediction log and settings from this browser.'; return; }
+        app.clearData(); setD.dlg.close();
+      });
+    }
+    app.clearData = () => {
+      clearTimeout(saveT);                      // a pending autosave must not write the old design back
+      S.clearAll(); G.del('name');
+      app.settings = Object.assign({ sig: 3, team: '', classPeriod: '', predictFirst: false }, cfg.defaultSettings || {});
+      app.log = []; app.state = cfg.defaultState(); nameEl.value = ''; app.invalid = {};
+      if (cfg.afterLoad) cfg.afterLoad(app);
+      clearPrediction(); app.refreshFields(); render();
+      app.toast('Your data was cleared from this browser.');
+    };
+    app.saveSettings = saveSettings;
+    $('shSettings').addEventListener('click', () => { renderSettings(); setD.dlg.showModal(); });
+
+    /* =================================================================
+       HELP (00 §2)
+       ================================================================= */
+    function renderHelp() {
+      const hp = cfg.help || {};
+      const keys = (hp.keys || []).concat([['?', 'Open this help'], ['Esc', 'Close a dialog'], ['↑ / ↓ in a number box', 'Step the value (hold Shift for ×10)'], ['Enter in a prediction box', 'Check']]);
+      helpD.body.innerHTML = (hp.html || '') +
+        '<h3>Predict first</h3><p>Turn on <strong>Predict first</strong> in the header. The results you are asked to predict are hidden. Type a prediction for each one and press <strong>Check</strong>. The tool shows how far off you were and saves the attempt to your prediction log (<strong>Log</strong> button). Change any input and the results hide again. Within 1% counts as a match and within 5% as close. Open <strong>Show the working</strong> to see each step of the calculation and find where a prediction went wrong.</p>' +
+        '<h3>Numbers and units</h3><p>Results show 3 significant figures (4 in Settings). The tool never rounds in the middle of a calculation. ' + (hp.units || '') + '</p>' +
+        '<h3>Saving your work</h3><p>Your name, design and predictions are kept in this browser. <strong>Save</strong> downloads a design file, and <strong>Load</strong> opens one (you can also drop a file onto the page). <strong>Export image</strong> downloads a picture of the drawing, and <strong>Report</strong> opens a printable page: choose "Save as PDF" in the print window. Exports always print ink on paper, whichever theme is on screen.</p>' +
+        '<h3>Keyboard</h3><ul>' + keys.map(([k, a]) => '<li><kbd>' + esc(k) + '</kbd> ' + esc(a) + '</li>').join('') + '</ul>' +
+        '<p>Screen readers hear a description of the drawing whenever it changes. With your system\'s reduce motion setting on, animations stop but numbers stay live. Use a laptop, Chromebook or full-size tablet; phone screens are too small for the drawing.</p>' +
+        '<h3>Sources</h3><ol>' + (hp.sources || []).map(s => '<li>' + esc(s.title) + (s.url ? ': <a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.url) + '</a>' : '') + '</li>').join('') + '</ol>' +
+        '<div class="teacher"><h3 style="margin-top:0">Teacher notes</h3>' + (hp.teacher || '') +
+        '<p>The prediction log exports as JSON or CSV in the shared Engineered by the Numbers format, so a class set can be merged in the Prediction Log Collector. Nothing is sent anywhere; all data stays in the student\'s browser.</p></div>' +
+        '<p class="note">' + esc(cfg.tool) + ' version ' + esc(cfg.version) + '.</p>';
+    }
+    app.openHelp = () => { renderHelp(); helpD.dlg.showModal(); };
+    $('shHelp').addEventListener('click', app.openHelp);
+    document.addEventListener('keydown', e => {
+      const t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      if (e.key === '?' && !typing && !document.querySelector('dialog[open]')) { e.preventDefault(); app.openHelp(); }
+    });
+
+    /* ---------------- go ---------------- */
+    syncTheme();
+    if (cfg.afterLoad) cfg.afterLoad(app);
+    if (cfg.build) cfg.build(app);
+    app.fields.forEach(f => f.revalidate());
+    render();
+    if (typeof window !== 'undefined') window.__app = app;
+    return app;
+  }
+
+  return { create, util, version: '1.0.0' };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = Shell;
+/* END vendor:shell.js */
+/* BEGIN core */
+// Motor and Drive Matcher core (spec 02). Sits between the interface and the
+// shared MotorCore model: converts the display-unit state (N·m and its datasheet
+// cousins, rpm, mm, kg) to SI, runs the operating point, the ratio solver and
+// the electrical extension, rounds the recommended ratio, builds the
+// show-the-working steps and the description, and reads and writes the
+// drive-request and drive-result files. Pure functions; tested in dev/test.js.
+const DriveTool = (function () {
+  'use strict';
+  const MC = typeof MotorCore !== 'undefined' ? MotorCore : require('./vendor/motor-core.js');
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const rad = MC.rpmToRad, rpm = MC.radToRpm;
+
+  // Stall torque units (§4). 1 ozf = 0.27801385 N (1 lbf = 16 ozf); 1 kgf = 9.80665 N.
+  const TORQUE_UNITS = {
+    'N·m': 1, 'N·cm': 0.01, 'oz·in': 0.27801385 * 0.0254, 'kg·cm': 9.80665 * 0.01,
+  };
+  const EXAMPLE_MOTOR = { label: 'Example motor (not a real product)', Ts: 2, N0: 300 };
+
+  const SOURCES = {
+    mit: 'MIT D.C. motor torque/speed tutorial',
+    mitP: 'MIT D.C. motor tutorial, power curve page',
+    mct: 'Motion Control Tips, torque equation and DC motors',
+    faul: 'Faulhaber, DC motor calculations',
+    isl: 'ISL Products, reading DC gear motor performance curves',
+    ostx: 'OpenStax University Physics Vol. 1, 10.8',
+  };
+
+  const MAX_STAGES = 4, MAX_COMPARE = 2;
+
+  function defaultState() {
+    return {
+      preset: 'example', label: EXAMPLE_MOTOR.label, Ts: 2, TsUnit: 'N·m', N0: 300, k: 1,
+      stages: [{ id: 1, ratio: 3.14, efficiency: 0.90 }], nextId: 2,
+      loadType: 'torque', TL: 0.68, F: 22.6, rF: 30, m: 5, rS: 20,
+      useTarget: true, Ntarget: 95.5, rounding: '0.01',
+      electrical: false, V: 12, I0: 0.2, Is: 10,
+      compare: [],
+    };
+  }
+
+  const FIELDS = {
+    Ts: { name: 'Stall torque', gt: 0 },
+    N0: { name: 'No-load speed', unit: 'rpm', min: 1, max: 50000 },
+    k: { name: 'Motors in parallel', min: 1, max: 4, integer: true },
+    ratio: { name: 'Stage ratio', min: 0.1, max: 100 },
+    eff: { name: 'Stage efficiency', min: 0.3, max: 1 },
+    TL: { name: 'Load torque', unit: 'N·m', min: 0, max: 5000 },
+    F: { name: 'Force', unit: 'N', min: 0, max: 100000 },
+    r: { name: 'Radius', unit: 'mm', gt: 0, max: 5000 },
+    m: { name: 'Mass', unit: 'kg', min: 0, max: 10000 },
+    Nt: { name: 'Target output speed', unit: 'rpm', min: 0.1, max: 50000 },
+    V: { name: 'Voltage', unit: 'V', gt: 0, max: 1000 },
+    I0: { name: 'No-load current', unit: 'A', min: 0, max: 1000 },
+    Is: { name: 'Stall current', unit: 'A', gt: 0, max: 5000 },
+  };
+  // Stall torque range 0.001 to 500 N·m, checked in the unit the student chose.
+  function tsCheck(v, unit) {
+    const nm = v * TORQUE_UNITS[unit];
+    if (!(nm >= 0.001 && nm <= 500)) return 'Stall torque must be between 0.001 and 500 N·m (' + fmtPlain(0.001 / TORQUE_UNITS[unit]) + ' to ' + fmtPlain(500 / TORQUE_UNITS[unit]) + ' ' + unit + ').';
+    return null;
+  }
+  const fmtPlain = v => String(Number(v.toPrecision(3)));
+
+  const TsNm = s => s.Ts * TORQUE_UNITS[s.TsUnit];
+  // Switch the stall torque unit, keeping the physical values (also for compared motors).
+  function convertTs(s, unit) {
+    const k = TORQUE_UNITS[s.TsUnit] / TORQUE_UNITS[unit];
+    s.Ts = Number((s.Ts * k).toPrecision(10));
+    (s.compare || []).forEach(c => { c.Ts = Number((c.Ts * k).toPrecision(10)); });
+    s.TsUnit = unit;
+  }
+
+  // Load torque at the output, N·m; radius in m for linear speed.
+  function load(s) {
+    if (s.loadType === 'force') return { TL: MC.loadTorque({ type: 'force', F: s.F, r: s.rF / 1000 }), r: s.rF / 1000 };
+    if (s.loadType === 'lift') return { TL: MC.loadTorque({ type: 'lift', m: s.m, r: s.rS / 1000 }), r: s.rS / 1000 };
+    return { TL: s.TL, r: null };
+  }
+  // Set whichever load variable the student is using so the load torque becomes TL (plot dragging).
+  function setLoadTorque(s, TL) {
+    TL = Math.max(0, TL);
+    if (s.loadType === 'force') s.F = round4(TL / (s.rF / 1000));
+    else if (s.loadType === 'lift') s.m = round4(TL / (MC.G * s.rS / 1000));
+    else s.TL = round4(TL);
+  }
+  const round4 = v => Number(v.toPrecision(4));
+
+  // Round a recommended ratio to the chosen precision (§3.3).
+  function roundRatio(i, mode) {
+    if (!isNum(i)) return null;
+    if (mode === 'exact') return { ratio: i, text: 'exact' };
+    if (mode === 'pair') { const p = MC.nearestPair(i); return p ? { ratio: p.ratio, text: p.z2 + ':' + p.z1 + ' gear pair', pair: p } : { ratio: i, text: 'exact (no pair between 10 and 100 teeth)' }; }
+    const step = Number(mode) || 0.01;
+    return { ratio: Math.round(i / step) * step, text: 'nearest ' + mode };
+  }
+
+  function solve(s, bands) {
+    const Ts = TsNm(s), w0 = rad(s.N0), g = MC.gearing(s.stages), L = load(s);
+    const base = { Ts, w0, k: s.k, i: g.i, eta: g.eta, TL: L.TL, r: L.r, bands };
+    const op = MC.operate(base);
+    const out = {
+      state: s, Ts, TsTotal: s.k * Ts, g, TL: L.TL, r: L.r, op, bands: bands || MC.DEFAULT_BANDS,
+      Nm: rpm(op.wm), Nout: rpm(op.wout), v: op.v, Pmax: op.motor.Pmax, TatPmax: op.motor.TatPmax, NatPmax: s.N0 / 2,
+    };
+    if (s.useTarget) {
+      const sv = MC.solveRatio({ Ts, w0, k: s.k, eta: g.eta, TL: L.TL, wTarget: rad(s.Ntarget) });
+      out.solver = sv;
+      if (sv.feasible) {
+        const rr = roundRatio(sv.iHigh, s.rounding);
+        const at = MC.operate(Object.assign({}, base, { i: rr.ratio }));
+        out.rounded = Object.assign(rr, { op: at, Nout: rpm(at.wout), err: (rpm(at.wout) - s.Ntarget) / s.Ntarget * 100 });
+      }
+    }
+    if (s.electrical) out.elec = MC.electrical({ V: s.V, I0: s.I0, Is: s.Is, Ts, k: s.k, Tm: op.Tm, wm: op.wm });
+    out.compare = (s.compare || []).map(c => {
+      const o = MC.operate({ Ts: c.Ts * TORQUE_UNITS[s.TsUnit], w0: rad(c.N0), k: 1, i: g.i, eta: g.eta, TL: L.TL, bands });
+      return { c, op: o, Nout: rpm(o.wout), Nm: rpm(o.wm), Ts: c.Ts * TORQUE_UNITS[s.TsUnit] };
+    });
+    return out;
+  }
+
+  const BAND_TEXT = { continuous: 'Continuous', short: 'Short periods only', avoid: 'Avoid', stalled: 'Stalled' };
+
+  // Predict-first targets (§6): N_out, T_m as % of stall, recommended ratio.
+  function targets(sol) {
+    const s = sol.state;
+    const sv = sol.solver;
+    return [
+      { key: 'Nout', quantity: 'output speed N_out', label: 'Output speed N<sub>out</sub>', unit: 'rpm', model: sol.Nout },
+      { key: 'pct', quantity: 'motor torque % of stall', label: 'T<sub>m</sub> as % of stall', unit: '%', model: sol.op.pct },
+      { key: 'ratio', quantity: 'recommended ratio i', label: 'Recommended ratio i', unit: '', model: sv && sv.feasible ? sv.iHigh : null, reason: !s.useTarget ? 'no target speed set' : 'this motor cannot reach that speed at that load' },
+    ];
+  }
+
+  function snapshot(s) {
+    const L = load(s);
+    return {
+      values: {
+        stallTorque: TsNm(s), noLoadSpeed: rad(s.N0), motors: s.k,
+        stages: s.stages.map(x => ({ ratio: x.ratio, efficiency: x.efficiency })),
+        loadType: s.loadType, loadTorque: L.TL, radius: L.r, targetSpeed: s.useTarget ? rad(s.Ntarget) : null,
+      },
+      units: { stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' },
+    };
+  }
+
+  /* ------------------------------------------------------------ show the working */
+  function working(sol, f, fu) {
+    const s = sol.state, steps = [], op = sol.op;
+    if (s.loadType === 'force') steps.push({ title: 'Load torque from a force at a radius', formula: 'T<sub>L</sub> = F · r', sub: fu(s.F, 'N') + ' × ' + fu(s.rF / 1000, 'm'), result: fu(sol.TL, 'N·m'), source: SOURCES.ostx });
+    if (s.loadType === 'lift') steps.push({ title: 'Load torque to lift a mass on a spool', formula: 'T<sub>L</sub> = m g r', sub: fu(s.m, 'kg') + ' × 9.81 m/s² × ' + fu(s.rS / 1000, 'm'), result: fu(sol.TL, 'N·m'), source: SOURCES.ostx });
+    if (s.stages.length > 1) steps.push({ title: 'Overall ratio and efficiency', formula: 'i = Π i<sub>stage</sub>, η = Π η<sub>stage</sub>', sub: 'i = ' + s.stages.map(x => f(x.ratio)).join(' × ') + ', η = ' + s.stages.map(x => f(x.efficiency)).join(' × '), result: 'i = ' + f(sol.g.i) + ', η = ' + f(sol.g.eta) });
+    if (s.k > 1) steps.push({ title: 'Motors in parallel', formula: 'T<sub>s,total</sub> = k · T<sub>s</sub>', sub: s.k + ' × ' + fu(sol.Ts, 'N·m'), result: fu(sol.TsTotal, 'N·m') + ' (same no-load speed)', source: SOURCES.mit });
+    steps.push({ title: 'Torque the motor must supply', formula: 'T<sub>m</sub> = T<sub>L</sub> / (i η)', sub: fu(sol.TL, 'N·m') + ' / (' + f(sol.g.i) + ' × ' + f(sol.g.eta) + ')', result: fu(op.Tm, 'N·m'), source: SOURCES.mct });
+    steps.push({ title: 'Percent of stall', formula: 'T<sub>m</sub> / T<sub>s</sub> × 100', sub: fu(op.Tm, 'N·m') + ' / ' + fu(sol.TsTotal, 'N·m') + ' × 100', result: (f(op.pct) + '%') + ', ' + BAND_TEXT[op.band].toLowerCase() + (op.band === 'stalled' ? '' : ' duty'), source: SOURCES.isl });
+    if (op.stalled) steps.push({ title: 'Motor speed', formula: 'T<sub>m</sub> ≥ T<sub>s</sub>, so the motor stalls', result: 'N<sub>m</sub> = 0 rpm, N<sub>out</sub> = 0 rpm', source: SOURCES.mit });
+    else {
+      steps.push({ title: 'Motor speed on its torque-speed line', formula: 'N<sub>m</sub> = N<sub>0</sub> (1 − T<sub>m</sub> / T<sub>s</sub>)', sub: fu(s.N0, 'rpm') + ' × (1 − ' + fu(op.Tm, 'N·m') + ' / ' + fu(sol.TsTotal, 'N·m') + ')', result: fu(sol.Nm, 'rpm'), source: SOURCES.mit });
+      steps.push({ title: 'Output speed', formula: 'N<sub>out</sub> = N<sub>m</sub> / i', sub: fu(sol.Nm, 'rpm') + ' / ' + f(sol.g.i), result: fu(sol.Nout, 'rpm'), source: SOURCES.mct });
+      if (isNum(sol.v)) steps.push({ title: 'Linear speed at the ' + (s.loadType === 'lift' ? 'spool' : 'wheel'), formula: 'v = ω<sub>out</sub> r, ω = 2πN/60', sub: fu(op.wout, 'rad/s') + ' × ' + fu(sol.r, 'm'), result: fu(sol.v, 'm/s'), source: SOURCES.ostx });
+    }
+    steps.push({ title: 'Output power', formula: 'P<sub>out</sub> = T<sub>L</sub> ω<sub>out</sub>', sub: fu(sol.TL, 'N·m') + ' × ' + fu(op.wout, 'rad/s'), result: fu(op.Pout, 'W'), source: SOURCES.ostx });
+    steps.push({ title: 'Peak mechanical power', formula: 'P<sub>max</sub> = T<sub>s</sub> ω<sub>0</sub> / 4, at T<sub>s</sub>/2 and N<sub>0</sub>/2', sub: fu(sol.TsTotal, 'N·m') + ' × ' + fu(rad(s.N0), 'rad/s') + ' / 4', result: fu(sol.Pmax, 'W') + ' at ' + fu(sol.TatPmax, 'N·m') + ' and ' + fu(sol.NatPmax, 'rpm'), source: SOURCES.mitP });
+    if (sol.solver) {
+      const sv = sol.solver;
+      const c = s.N0 * sol.TL / (sol.g.eta * sol.TsTotal);
+      steps.push({ title: 'Ratio for the target speed under load', formula: 'N<sub>out</sub> i² − N<sub>0</sub> i + N<sub>0</sub> T<sub>L</sub> / (η T<sub>s</sub>) = 0', sub: f(s.Ntarget) + ' i² − ' + f(s.N0) + ' i + ' + f(s.N0) + ' × ' + f(sol.TL) + ' / (' + f(sol.g.eta) + ' × ' + f(sol.TsTotal) + ') = 0, that is ' + f(s.Ntarget) + ' i² − ' + f(s.N0) + ' i + ' + f(c) + ' = 0', source: SOURCES.mit });
+      steps.push({ title: 'Discriminant', formula: 'D = N<sub>0</sub>² − 4 N<sub>out</sub> N<sub>0</sub> T<sub>L</sub> / (η T<sub>s</sub>)', sub: f(s.N0) + '² − 4 × ' + f(s.Ntarget) + ' × ' + f(c), result: f(rpm(rpm(sv.D))) + (sv.D < 0 ? ' < 0: no ratio can reach the target' : '') });
+      if (sv.feasible) {
+        steps.push({ title: 'Both roots', formula: 'i = (N<sub>0</sub> ± √D) / (2 N<sub>out</sub>)', sub: '(' + f(s.N0) + ' ± ' + f(rpm(Math.sqrt(sv.D))) + ') / (2 × ' + f(s.Ntarget) + ')', result: 'i<sub>high</sub> = ' + f(sv.iHigh) + ' (' + (f(sv.pctHigh) + '% of stall') + ')' + (sv.iLow ? ', i<sub>low</sub> = ' + f(sv.iLow) + ' (' + (f(sv.pctLow) + '% of stall') + ')' : '') });
+        if (sol.rounded) steps.push({ title: 'Rounded ratio (' + sol.rounded.text + ')', formula: 'N<sub>out</sub> at the rounded ratio, from the same motor line', result: 'i = ' + f(sol.rounded.ratio) + ' gives ' + fu(sol.rounded.Nout, 'rpm') + ', ' + (sol.rounded.err >= 0 ? '+' : '') + (f(sol.rounded.err) + '%') + ' from the target' });
+      }
+    }
+    if (sol.elec) {
+      const e = sol.elec;
+      steps.push({ title: 'Current', formula: 'I = I<sub>0</sub> + (I<sub>s</sub> − I<sub>0</sub>) T<sub>m</sub> / T<sub>s</sub>' + (s.k > 1 ? ', per motor, × k motors' : ''), sub: fu(s.I0, 'A') + ' + (' + fu(s.Is, 'A') + ' − ' + fu(s.I0, 'A') + ') × ' + fu(op.Tm / s.k, 'N·m') + ' / ' + fu(sol.Ts, 'N·m'), result: fu(e.I, 'A'), source: SOURCES.faul });
+      steps.push({ title: 'Electrical power in', formula: 'P<sub>in</sub> = V I', sub: fu(s.V, 'V') + ' × ' + fu(e.I, 'A'), result: fu(e.Pin, 'W'), source: SOURCES.faul });
+      steps.push({ title: 'Motor efficiency', formula: 'η<sub>motor</sub> = P<sub>mech</sub> / P<sub>in</sub>, P<sub>mech</sub> = T<sub>m</sub> ω<sub>m</sub>', sub: fu(e.Pmech, 'W') + ' / ' + fu(e.Pin, 'W'), result: e.eff === null ? 'not defined: no power in' : (f(e.eff * 100) + '%'), source: SOURCES.faul });
+    }
+    return steps;
+  }
+
+  function describe(sol, fu, masked) {
+    const s = sol.state;
+    let t = 'Motor torque-speed plot. ' + s.label + ': stall torque ' + fu(sol.TsTotal, 'newton meters') + (s.k > 1 ? ' for ' + s.k + ' motors' : '') + ', no-load speed ' + fu(s.N0, 'rpm') + '. Gear ratio ' + fu(sol.g.i, '') + ', efficiency ' + fu(sol.g.eta, '') + '. Load ' + fu(sol.TL, 'newton meters') + ' at the output.';
+    if (masked) return t + ' The operating point is hidden until you check your prediction.';
+    const op = sol.op;
+    if (op.stalled) t += ' The motor stalls: it would need ' + fu(op.Tm, 'newton meters') + '.';
+    else t += ' Operating point: motor torque ' + fu(op.Tm, 'newton meters') + ', ' + fu(op.pct, 'percent') + ' of stall, ' + BAND_TEXT[op.band].toLowerCase() + ' duty; motor speed ' + fu(sol.Nm, 'rpm') + ', output ' + fu(sol.Nout, 'rpm') + '.';
+    if (sol.solver && sol.solver.feasible) t += ' Recommended ratio ' + fu(sol.solver.iHigh, '') + '.';
+    if (sol.solver && !sol.solver.feasible) t += ' No ratio reaches the target speed.';
+    return t.replace(/ \./g, '.').replace(/ ,/g, ',');
+  }
+
+  /* ------------------------------------------------------------ files (§5.5) */
+  function applyDriveRequest(s, req) {
+    const v = req.value, notes = [];
+    s.loadType = 'torque'; s.TL = v.loadTorque;
+    if (isNum(v.targetSpeed)) { s.useTarget = true; s.Ntarget = v.targetSpeed; }
+    if (v.stages) { s.stages = v.stages.slice(0, MAX_STAGES).map(x => ({ id: s.nextId++, ratio: x.ratio, efficiency: x.efficiency })); if (v.stages.length > MAX_STAGES) notes.push('Only the first ' + MAX_STAGES + ' stages were loaded.'); }
+    if (v.motor) {
+      s.preset = 'custom'; s.label = v.motor.label || 'Motor from ' + v.source;
+      s.TsUnit = 'N·m'; s.Ts = v.motor.stallTorque; s.N0 = v.motor.noLoadSpeed; s.k = Math.min(4, Math.max(1, Math.round(v.motor.count || 1)));
+    }
+    return notes;
+  }
+  function driveResult(sol) {
+    const s = sol.state, op = sol.op, sv = sol.solver;
+    return {
+      motor: { label: s.label, stallTorque: sol.Ts, noLoadSpeed: s.N0, count: s.k },
+      stages: s.stages.map(x => ({ ratio: x.ratio, efficiency: x.efficiency })),
+      ratio: sol.g.i, efficiency: sol.g.eta, loadTorque: sol.TL, targetSpeed: s.useTarget ? s.Ntarget : null,
+      ratioRoots: sv && sv.feasible ? { high: sv.iHigh, low: sv.iLow } : null,
+      operatingPoint: { motorTorque: op.Tm, motorSpeed: sol.Nm, pctStall: op.pct, outputSpeed: sol.Nout, outputTorque: sol.TL, stalled: op.stalled },
+      dutyBand: op.band,
+    };
+  }
+
+  // Validate a teacher's motor list (settings, JSON). Returns { list } or { error }.
+  function readMotorList(text) {
+    let data;
+    try { data = JSON.parse(text); } catch (e) { return { error: 'The motor list is not valid JSON: ' + e.message }; }
+    if (!Array.isArray(data)) return { error: 'The motor list must be a JSON array of motors.' };
+    const list = [];
+    for (let i = 0; i < data.length; i++) {
+      const m = data[i] || {};
+      const Ts = Number(m.stallTorque), N0 = Number(m.noLoadSpeed);
+      if (!m.label || !(Ts >= 0.001 && Ts <= 500) || !(N0 >= 1 && N0 <= 50000)) return { error: 'Motor ' + (i + 1) + ' needs a label, stallTorque in N·m (0.001 to 500) and noLoadSpeed in rpm (1 to 50,000).' };
+      list.push({ label: String(m.label).slice(0, 60), stallTorque: Ts, noLoadSpeed: N0 });
+    }
+    return { list };
+  }
+  const DEFAULT_MOTORS = [{ label: EXAMPLE_MOTOR.label, stallTorque: 2, noLoadSpeed: 300 }];
+
+  return {
+    TORQUE_UNITS, EXAMPLE_MOTOR, SOURCES, MAX_STAGES, MAX_COMPARE, FIELDS, BAND_TEXT, DEFAULT_MOTORS,
+    defaultState, tsCheck, TsNm, convertTs, load, setLoadTorque, roundRatio, solve, targets, snapshot,
+    working, describe, applyDriveRequest, driveResult, readMotorList,
+  };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
+/* END core */
+
+/* =====================================================================
+   INTERFACE
+   ===================================================================== */
+(function () {
+  'use strict';
+  const D = DriveTool, U = Shell.util, esc = U.esc;
+  const VERSION = '1.0.0';
+  let SOL = null, LAYOUT = null;
+  const ui = { drag: false };
+  const $ = id => document.getElementById(id);
+  const r1 = v => Math.round(v * 10) / 10;
+  const DASH = ['8 5', '2 4'];
+  function niceStep(span, target) {
+    const raw = span / (target || 5), mag = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / mag;
+    return (n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10) * mag;
+  }
+  const bands = app => ({ continuous: app.settings.bandCont, short: app.settings.bandShort });
+  const motorList = app => app.settings.motors && app.settings.motors.length ? app.settings.motors : D.DEFAULT_MOTORS;
+
+  /* ------------------------------------------------------------ drawing */
+  function draw(app, opts) {
+    const p = app.pal(), s = app.state, sol = SOL, masked = app.masked();
+    const font = esc(p.fontUi), mono = esc(p.fontMono);
+    const W = 700, left = 72, right = 70, top = 58, ph = 310, pw = W - left - right;
+    const out = [];
+    const txt = (x, y, str, o) => '<text x="' + r1(x) + '" y="' + r1(y) + '" font-family="' + ((o && o.mono) ? mono : font) + '" font-size="' + ((o && o.size) || 12) + '"' +
+      ((o && o.weight) ? ' font-weight="' + o.weight + '"' : '') + ' fill="' + ((o && o.fill) || p.ink) + '"' + ((o && o.anchor) ? ' text-anchor="' + o.anchor + '"' : '') +
+      ((o && o.rot) ? ' transform="rotate(' + o.rot + ' ' + r1(x) + ' ' + r1(y) + ')"' : '') + '>' + esc(str) + '</text>';
+    const line = (x1, y1, x2, y2, stroke, w, dash) => '<line x1="' + r1(x1) + '" y1="' + r1(y1) + '" x2="' + r1(x2) + '" y2="' + r1(y2) + '" stroke="' + stroke + '" stroke-width="' + (w || 1) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>';
+    if (!sol) {
+      const H = 120;
+      LAYOUT = null;
+      return { width: W, height: H, svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '"' + (opts && opts.export ? '' : ' id="mdSvg" tabindex="0" role="img" aria-label="Motor plot"') + '><rect width="' + W + '" height="' + H + '" fill="' + p.paper + '"/>' + txt(W / 2, 64, 'Fix the highlighted input to see the motor plot.', { anchor: 'middle', fill: p.fail, weight: 600 }) + '</svg>' };
+    }
+    const Ts = sol.TsTotal;
+    const xMax = 1.05 * Math.max(Ts, ...sol.compare.map(c => c.Ts));
+    const yMax = 1.1 * Math.max(s.N0, ...sol.compare.map(c => c.c.N0));
+    const pMax = 1.1 * Math.max(sol.Pmax, ...sol.compare.map(c => c.Ts * c.c.N0 * Math.PI / 30 / 4));
+    const X = t => left + t / xMax * pw, Y = n => top + (1 - n / yMax) * ph, YP = w => top + (1 - w / pMax) * ph;
+    // duty bands (primary motor)
+    const b = bands(app);
+    [[0, b.continuous, p.pass, 'continuous ≤' + b.continuous + '%'], [b.continuous, b.short, p.brass, 'short use ' + b.continuous + '–' + b.short + '%'], [b.short, 100, p.fail, 'avoid >' + b.short + '%']].forEach(([a, c, col, lab]) => {
+      const x1 = X(Ts * a / 100), x2 = X(Ts * c / 100);
+      out.push('<rect x="' + r1(x1) + '" y="' + top + '" width="' + r1(x2 - x1) + '" height="' + ph + '" fill="' + col + '" opacity="0.13"/>');
+      out.push(txt((x1 + x2) / 2, top + ph - 8, lab, { anchor: 'middle', size: 11.5, fill: p.ink }));
+    });
+    // Legend row (keeps line labels off the plot).
+    const leg = [[s.label, null, p.ink, 2.8]].concat(sol.compare.map((c, i) => [c.c.label, DASH[i], p.ink, 2])).concat([['power', '6 5', p.dykem, 2]]);
+    let lx = left;
+    leg.forEach(([lab, dash, col, w]) => {
+      const t = lab.length > 34 ? lab.slice(0, 32) + '…' : lab;
+      out.push(line(lx, 17, lx + 26, 17, col, w, dash) + txt(lx + 31, 21, t, { size: 11.5, fill: col === p.dykem ? p.dykem : p.ink }));
+      lx += 40 + t.length * 6.3;
+    });
+    out.push(txt(left, top - 10, 'Duty bands after ISL Products guidance', { size: 11, fill: p.inkSoft }));
+    // axes and grid
+    const xs = niceStep(xMax), ys = niceStep(yMax), ps = niceStep(pMax);
+    for (let v = 0; v <= xMax + 1e-12; v += xs) { out.push(line(X(v), top + ph, X(v), top + ph + 5, p.ink)); out.push(txt(X(v), top + ph + 19, app.fmt(v), { anchor: 'middle', size: 11, fill: p.inkSoft })); }
+    for (let v = 0; v <= yMax + 1e-12; v += ys) { out.push(line(left - 5, Y(v), left, Y(v), p.ink)); out.push(txt(left - 8, Y(v) + 4, app.fmt(v), { anchor: 'end', size: 11, fill: p.inkSoft })); }
+    for (let v = 0; v <= pMax + 1e-12; v += ps) { out.push(line(left + pw, YP(v), left + pw + 5, YP(v), p.dykem)); out.push(txt(left + pw + 8, YP(v) + 4, app.fmt(v), { size: 11, fill: p.dykem })); }
+    out.push('<rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '" fill="none" stroke="' + p.ink + '" stroke-width="1.2"/>');
+    out.push(txt(left + pw / 2, top + ph + 40, 'Motor torque (N·m)', { anchor: 'middle', size: 12.5 }));
+    out.push(txt(18, top + ph / 2, 'Motor speed (rpm)', { anchor: 'middle', size: 12.5, rot: -90 }));
+    out.push(txt(W - 12, top + ph / 2, 'Mechanical power (W)', { anchor: 'middle', size: 12.5, rot: 90, fill: p.dykem }));
+    // power curve (dashed) and motor line
+    const pc = [];
+    for (let k = 0; k <= 60; k++) { const T = Ts * k / 60, w = sol.op.motor.w0 * (1 - T / Ts); pc.push(r1(X(T)) + ',' + r1(YP(T * w))); }
+    out.push('<polyline points="' + pc.join(' ') + '" fill="none" stroke="' + p.dykem + '" stroke-width="2" stroke-dasharray="6 5"/>');
+    out.push(txt(X(Ts / 2), YP(sol.Pmax) - 8, 'peak power ' + app.fmt(sol.Pmax) + ' W at ' + app.fmt(sol.TatPmax) + ' N·m, ' + app.fmt(sol.NatPmax) + ' rpm', { anchor: 'middle', size: 11.5, fill: p.dykem }));
+    out.push(line(X(0), Y(s.N0), X(Ts), Y(0), p.ink, 2.8));
+    // compare motors
+    sol.compare.forEach((c, i) => {
+      out.push(line(X(0), Y(c.c.N0), X(c.Ts), Y(0), p.ink, 2, DASH[i]));
+      if (!masked && !c.op.stalled) out.push('<circle cx="' + r1(X(c.op.Tm)) + '" cy="' + r1(Y(c.Nm)) + '" r="5" fill="' + p.paper + '" stroke="' + p.ink + '" stroke-width="2"/>');
+    });
+    // operating point
+    const op = sol.op;
+    if (!masked) {
+      if (op.stalled) {
+        out.push('<circle cx="' + r1(X(Math.min(op.Tm, xMax))) + '" cy="' + r1(Y(0)) + '" r="7" fill="' + p.fail + '"/>');
+        out.push(txt(X(Math.min(op.Tm, xMax)) - 10, Y(0) - 12, 'STALLED: needs ' + app.fmt(op.Tm) + ' N·m', { anchor: 'end', weight: 700, fill: p.fail }));
+      } else {
+        const ox = X(op.Tm), oy = Y(sol.Nm);
+        out.push(line(ox, oy, ox, top + ph, p.fail, 1, '2 3') + line(left, oy, ox, oy, p.fail, 1, '2 3'));
+        out.push('<circle cx="' + r1(ox) + '" cy="' + r1(oy) + '" r="7" fill="' + p.fail + '" stroke="' + p.paper + '" stroke-width="1.5"/>');
+        const end = ox > left + pw * 0.6;
+        out.push(txt(ox + (end ? -12 : 12), oy - 10, 'operating point: ' + app.fmt(op.Tm) + ' N·m, ' + app.fmt(sol.Nm) + ' rpm', { weight: 700, fill: p.fail, anchor: end ? 'end' : 'start' }));
+      }
+    }
+    // drag surface
+    out.push('<rect class="plotarea" x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '" fill="transparent"/>');
+    let y = top + ph + 52;
+    // electrical panel
+    if (sol.elec && s.electrical) {
+      const t2 = y + 26, h2 = 150, Imax = 1.1 * (s.k * s.I0 + (s.Is - s.I0) * xMax / sol.Ts);
+      const YI = i => t2 + (1 - i / Imax) * h2, YE = e => t2 + (1 - e / 100) * h2;
+      out.push(txt(12, y + 14, 'Current and motor efficiency (extension)', { weight: 700, size: 13 }));
+      out.push('<rect x="' + left + '" y="' + t2 + '" width="' + pw + '" height="' + h2 + '" fill="none" stroke="' + p.ink + '" stroke-width="1.2"/>');
+      const Ipts = [], Epts = [];
+      for (let k = 0; k <= 60; k++) {
+        const T = xMax * k / 60, I = s.k * s.I0 + (s.Is - s.I0) * T / sol.Ts;
+        Ipts.push(r1(X(T)) + ',' + r1(YI(I)));
+        if (T <= Ts) { const w = sol.op.motor.w0 * (1 - T / Ts); Epts.push(r1(X(T)) + ',' + r1(YE(100 * T * w / (s.V * I)))); }
+      }
+      out.push('<polyline points="' + Ipts.join(' ') + '" fill="none" stroke="' + p.brassInk + '" stroke-width="2.2"/>');
+      out.push('<polyline points="' + Epts.join(' ') + '" fill="none" stroke="' + p.pass + '" stroke-width="2.2" stroke-dasharray="7 4"/>');
+      const is = niceStep(Imax, 4);
+      for (let v = 0; v <= Imax + 1e-12; v += is) out.push(txt(left - 8, YI(v) + 4, app.fmt(v), { anchor: 'end', size: 11, fill: p.brassInk }));
+      for (let v = 0; v <= 100; v += 25) out.push(txt(left + pw + 8, YE(v) + 4, v + '%', { size: 11, fill: p.pass }));
+      out.push(txt(18, t2 + h2 / 2, 'Current (A)', { anchor: 'middle', size: 12, rot: -90, fill: p.brassInk }));
+      out.push(txt(W - 12, t2 + h2 / 2, 'Efficiency', { anchor: 'middle', size: 12, rot: 90, fill: p.pass }));
+      out.push(txt(left + 6, t2 + 14, 'current (solid)', { size: 11, fill: p.brassInk }) + txt(left + 6, t2 + 28, 'efficiency (dashed)', { size: 11, fill: p.pass }));
+      if (!masked && !op.stalled) {
+        out.push('<circle cx="' + r1(X(op.Tm)) + '" cy="' + r1(YI(sol.elec.I)) + '" r="5" fill="' + p.brassInk + '"/>');
+        if (sol.elec.eff !== null) out.push('<circle cx="' + r1(X(op.Tm)) + '" cy="' + r1(YE(sol.elec.eff * 100)) + '" r="5" fill="' + p.pass + '"/>');
+      }
+      y = t2 + h2 + 12;
+    }
+    const H = Math.ceil(y);
+    LAYOUT = { W, H, left, pw, top, ph, xMax };
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '"' +
+      (opts && opts.export ? '' : ' id="mdSvg" tabindex="0" role="application" aria-roledescription="motor plot" aria-label="Motor torque-speed plot. Left and right arrow keys change the load torque; hold Shift for bigger steps." aria-describedby="shDesc"') +
+      '><rect width="' + W + '" height="' + H + '" fill="' + p.paper + '"/>' + out.join('') + '</svg>';
+    return { svg, width: W, height: H };
+  }
+
+  /* ------------------------------------------------------------ plot interaction */
+  function plotTorque(e) {
+    const svg = $('mdSvg'); if (!svg || !LAYOUT) return null;
+    const r = svg.getBoundingClientRect();
+    const sx = (e.clientX - r.left) * LAYOUT.W / r.width;
+    return Math.max(0, Math.min(LAYOUT.xMax, (sx - LAYOUT.left) / LAYOUT.pw * LAYOUT.xMax));
+  }
+  function setFromMotorTorque(app, Tm) {
+    const g = SOL.g;
+    D.setLoadTorque(app.state, Tm * g.i * g.eta);
+    app.refreshFields(); app.changed();
+  }
+  function wirePlot(app) {
+    const card = $('mdDraw');
+    card.addEventListener('pointerdown', e => {
+      if (!SOL || !e.target.closest('.plotarea')) return;
+      e.preventDefault(); ui.drag = true; card.setPointerCapture(e.pointerId);
+      const t = plotTorque(e); if (t !== null) setFromMotorTorque(app, t);
+    });
+    card.addEventListener('pointermove', e => { if (!ui.drag || !SOL) return; const t = plotTorque(e); if (t !== null) setFromMotorTorque(app, t); });
+    const end = e => { if (ui.drag) { ui.drag = false; try { card.releasePointerCapture(e.pointerId); } catch (x) { } } };
+    card.addEventListener('pointerup', end); card.addEventListener('pointercancel', end);
+    card.addEventListener('keydown', e => {
+      if (e.target.id !== 'mdSvg' || !SOL) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const step = SOL.TsTotal * (e.shiftKey ? 0.1 : 0.01) * (e.key === 'ArrowRight' ? 1 : -1);
+        setFromMotorTorque(app, Math.max(0, SOL.op.Tm + step));
+        const f = $('mdSvg'); if (f) f.focus({ preventScroll: true });
+        app.announce('Load torque ' + app.fmtU(SOL.TL, 'N·m') + ' at the output.');
+      }
+    });
+  }
+
+  /* ------------------------------------------------------------ dynamic lists */
+  function buildStages(app) {
+    const box = $('mdStages'); app.removeFields(box); box.innerHTML = '';
+    app.state.stages.forEach((st, n) => {
+      const card = document.createElement('div'); card.className = 'itemcard stcard';
+      card.innerHTML = '<div class="ih">Stage ' + (n + 1) + (app.state.stages.length > 1 ? '<button class="btn small danger rm" type="button" aria-label="Remove stage ' + (n + 1) + '">✕</button>' : '') + '</div>';
+      box.appendChild(card);
+      const rm = card.querySelector('.rm');
+      if (rm) rm.addEventListener('click', () => { app.state.stages = app.state.stages.filter(x => x.id !== st.id); buildStages(app); app.changed(); });
+      app.numField(card, Object.assign({ id: 'mdR' + st.id, label: 'Ratio', step: 0.01, get: () => st.ratio, set: (a, v) => { st.ratio = v; } }, D.FIELDS.ratio));
+      app.numField(card, Object.assign({ id: 'mdE' + st.id, label: 'Efficiency', step: 0.01, get: () => st.efficiency, set: (a, v) => { st.efficiency = v; } }, D.FIELDS.eff));
+    });
+    $('mdAddSt').disabled = app.state.stages.length >= D.MAX_STAGES;
+  }
+  function buildCompare(app) {
+    const box = $('mdCmp'); app.removeFields(box); box.innerHTML = '';
+    app.state.compare.forEach((c, n) => {
+      const card = document.createElement('div'); card.className = 'itemcard cmpcard';
+      card.innerHTML = '<div class="ih"><input type="text" maxlength="30" aria-label="Motor name" value="' + esc(c.label) + '"> <span class="note">' + (n === 0 ? 'dashed' : 'dotted') + '</span><button class="btn small danger rm" type="button" aria-label="Remove ' + esc(c.label) + '">✕</button></div>';
+      box.appendChild(card);
+      card.querySelector('input').addEventListener('input', e => { c.label = e.target.value || 'Motor'; app.changed({ keepPrediction: true }); });
+      card.querySelector('.rm').addEventListener('click', () => { app.state.compare = app.state.compare.filter(x => x.id !== c.id); buildCompare(app); app.changed(); });
+      app.numField(card, { id: 'mdCT' + c.id, label: 'Stall torque', name: 'Stall torque', unit: app.state.TsUnit, gt: 0, step: 0.1, check: v => D.tsCheck(v, app.state.TsUnit), get: () => c.Ts, set: (a, v) => { c.Ts = v; } });
+      app.numField(card, Object.assign({ id: 'mdCN' + c.id, label: 'No-load speed', step: 10, get: () => c.N0, set: (a, v) => { c.N0 = v; } }, D.FIELDS.N0));
+    });
+    $('mdAddCmp').disabled = app.state.compare.length >= D.MAX_COMPARE;
+  }
+
+  /* ------------------------------------------------------------ results */
+  function results(app) {
+    const s = app.state, sol = SOL, sh = app.show, fu = app.fmtU;
+    if (!sol) { app.el.results.innerHTML = '<div class="sec-h">Results</div><p class="reason">' + esc(app.invalidReason()) + '.</p>'; return; }
+    const op = sol.op, rows = [];
+    const row = (k, v, cls) => rows.push('<tr' + (cls ? ' class="' + cls + '"' : '') + '><th>' + k + '</th><td>' + v + '</td></tr>');
+    const bandCls = { continuous: 'pass', short: 'info', avoid: 'fail', stalled: 'fail' }[op.band];
+    row('Motor torque', sh(esc(fu(op.Tm, 'N·m')) + ' (' + esc((app.fmt(op.pct) + '%')) + ')'));
+    row('Motor speed', sh(esc(fu(sol.Nm, 'rpm'))));
+    row('Output speed', sh(esc(fu(sol.Nout, 'rpm'))));
+    if (sol.v !== undefined && sol.v !== null) row(s.loadType === 'lift' ? 'Lift speed' : 'Rim speed', sh(esc(fu(sol.v, 'm/s'))));
+    row('Output power / peak', sh(esc(fu(op.Pout, 'W'))) + ' / ' + esc(fu(sol.Pmax, 'W')));
+    row('Duty range', sh('<span class="verdict ' + bandCls + '">' + esc(D.BAND_TEXT[op.band]) + '</span>'));
+    let html = '<div class="sec-h">Results</div><table class="ro">' + rows.join('') + '</table>';
+    if (op.stalled && !app.masked()) html += '<p class="note warn">Stalled: the load needs ' + esc(fu(op.Tm, 'N·m')) + ' at the motor, more than its ' + esc(fu(sol.TsTotal, 'N·m')) + ' stall torque. Use more reduction, a stronger motor or more motors.</p>';
+    if (s.useTarget && sol.solver) {
+      const sv = sol.solver, r2 = [];
+      const row2 = (k, v) => r2.push('<tr><th>' + k + '</th><td class="wrap">' + v + '</td></tr>');
+      if (!sv.feasible) {
+        html += '<div class="sec-h">Ratio solver (target ' + esc(fu(s.Ntarget, 'rpm')) + ')</div>' + (app.masked() ? '<table class="ro"><tr><th>Recommended i</th><td>' + sh('') + '</td></tr></table>' : '<p class="note warn">This motor cannot deliver that speed at that load. It would need more power than it can make. Try a stronger motor or more motors.</p>');
+      } else {
+        row2('Recommended i', sh(esc(app.fmt(sv.iHigh))));
+        if (sv.iLow) row2('Other root', sh(esc(app.fmt(sv.iLow)) + ' <span class="reason">(' + esc((app.fmt(sv.pctLow) + '%')) + ' of stall) possible but the motor would work above half its stall torque</span>'));
+        const rr = sol.rounded;
+        row2('Rounded (' + esc(rr.text) + ')', sh(esc(app.fmt(rr.ratio)) + ' → ' + esc(fu(rr.Nout, 'rpm')) + ', error ' + esc((rr.err >= 0 ? '+' : '') + app.fmt(rr.err)) + '%'));
+        html += '<div class="sec-h">Ratio solver (target ' + esc(fu(s.Ntarget, 'rpm')) + ')</div><table class="ro">' + r2.join('') + '</table>' +
+          '<div class="btnrow"><button class="btn" id="mdUse" type="button"' + (app.masked() ? ' disabled' : '') + '>Use this ratio' + (app.masked() ? '' : ' (' + esc(app.fmt(rr.ratio)) + ')') + '</button></div>';
+      }
+    }
+    html += '<div class="btnrow"><button class="btn" id="mdExport" type="button" title="Download a drive-result file for the Gear Train Workbench or Conveyor Designer">Export drive result</button></div>';
+    if (sol.elec) {
+      const e = sol.elec;
+      html += '<div class="sec-h">Electrical (extension)</div><table class="ro"><tr><th>Current I</th><td>' + sh(esc(fu(e.I, 'A'))) + '</td></tr><tr><th>Power in</th><td>' + sh(esc(fu(e.Pin, 'W'))) + '</td></tr><tr><th>Motor efficiency</th><td>' + sh(e.eff === null ? '<span class="reason">not defined: no power in</span>' : esc((app.fmt(e.eff * 100) + '%'))) + '</td></tr></table>';
+    }
+    if (sol.compare.length) {
+      html += '<div class="sec-h">Compare motors</div><table class="cmp-t"><tr><th>Motor</th><th>% stall</th><th>N<sub>out</sub> (rpm)</th><th>Duty</th></tr>' +
+        [{ label: s.label + ' (solid)', op, Nout: sol.Nout }].concat(sol.compare.map((c, i) => ({ label: c.c.label + (i === 0 ? ' (dashed)' : ' (dotted)'), op: c.op, Nout: c.Nout })))
+          .map(r => '<tr><td>' + esc(r.label) + '</td><td>' + sh(esc(app.fmt(r.op.pct))) + '</td><td>' + sh(esc(app.fmt(r.Nout))) + '</td><td>' + sh(esc(D.BAND_TEXT[r.op.band])) + '</td></tr>').join('') + '</table>';
+    }
+    if (s.preset === 'example') html += '<p class="note warn">Example motor (not a real product). Enter your motor\'s datasheet values.</p>';
+    if (s.stages.some(x => x.efficiency === 0.9) ) html += '<p class="note">Stage efficiency 0.90 is an example value. Replace it with a measured one.</p>';
+    app.el.results.innerHTML = html;
+    const use = $('mdUse');
+    if (use) use.addEventListener('click', () => {
+      const eta = sol.g.eta;
+      s.stages = [{ id: s.nextId++, ratio: Number(sol.rounded.ratio.toPrecision(6)), efficiency: Number(eta.toPrecision(6)) }];
+      buildStages(app); app.changed(); app.toast('Gearing set to one stage, ratio ' + app.fmt(s.stages[0].ratio) + '.');
+    });
+    $('mdExport').addEventListener('click', () => {
+      const f = Schemas.makeDriveResult('Motor and Drive Matcher', D.driveResult(sol));
+      const name = U.exportName({ student: app.student(), tool: 'motor-drive-matcher', context: 'drive-result', dateISO: U.localDateISO(), ext: 'json' });
+      app.download(name, JSON.stringify(f, null, 2), 'application/json');
+      app.toast('Saved ' + name + '. Load it in the Gear Train Workbench or Conveyor Designer.');
+    });
+  }
+
+  /* ------------------------------------------------------------ help */
+  const HELP = {
+    html: '<p>Describe a DC motor by two numbers from its datasheet, the <strong>stall torque</strong> and the <strong>no-load speed</strong>. Add gearing and a load, and the tool shows where the motor actually runs. It can also solve for the gear ratio that hits a target output speed under that load.</p>' +
+      '<h3>Why the no-load speed gives the wrong ratio</h3><p>Say you want the output to turn at 95.5 rpm and the motor\'s no-load speed is 300 rpm. Dividing gives a ratio of 300 ÷ 95.5 = 3.14. But the load (0.68 N·m through 90% efficient gearing) makes the motor slow down along its torque-speed line to about 264 rpm. Through a 3.14 ratio the output turns at only 84.0 rpm, 12% slow (test cases MD-1 and MD-2). The ratio solver uses the <em>loaded</em> speed instead and gives 2.70, which delivers 95.5 rpm with the motor at about 14% of its stall torque.</p>' +
+      '<h3>The model</h3><ol>' +
+      '<li>Motor torque falls in a straight line with speed: T = T<sub>s</sub>(1 − N/N<sub>0</sub>). Two identical motors on one gearbox double the stall torque at the same no-load speed.</li>' +
+      '<li>Mechanical power P = Tω is zero at stall and at no load, and peaks at half the stall torque and half the no-load speed: P<sub>max</sub> = T<sub>s</sub>ω<sub>0</sub>/4.</li>' +
+      '<li>The gearing multiplies ratios and efficiencies. The motor must supply T<sub>m</sub> = T<sub>L</sub>/(iη), and it then runs at N<sub>m</sub> = N<sub>0</sub>(1 − T<sub>m</sub>/T<sub>s</sub>), giving N<sub>out</sub> = N<sub>m</sub>/i. If T<sub>m</sub> reaches T<sub>s</sub> the motor stalls.</li>' +
+      '<li>For a target speed, the ratio satisfies N<sub>out</sub>i² − N<sub>0</sub>i + N<sub>0</sub>T<sub>L</sub>/(ηT<sub>s</sub>) = 0. The larger root keeps the motor below half its stall torque. If there is no real root, the motor cannot make that much power.</li>' +
+      '<li>The efficiency η is treated as constant, whatever the load. Real gearboxes are less efficient at light loads.</li></ol>' +
+      '<p><strong>Duty range.</strong> One gear motor maker\'s guidance: up to 30% of stall torque for continuous duty, 30% to 60% for short periods only, and above 60% avoid. Your teacher can change these edges in Settings.</p>' +
+      '<p><strong>Load types.</strong> Enter a torque directly, a force at a radius (T = F r, for a pulley or wheel), or a mass lifted on a spool (T = m g r, with g = 9.81 m/s²).</p>' +
+      '<p><strong>Current and efficiency (extension).</strong> With the supply voltage, no-load current and stall current, current rises in a straight line with torque, I = I<sub>0</sub> + (I<sub>s</sub> − I<sub>0</sub>)T<sub>m</sub>/T<sub>s</sub>. Motor efficiency is P<sub>mech</sub>/(V I).</p>' +
+      '<p><strong>Working with other tools.</strong> <strong>Load</strong> opens a drive-request file from the Gear Train Workbench or the Conveyor Designer. <strong>Export drive result</strong> saves the chosen ratio, operating point and duty range for them to read.</p>',
+    units: 'Stall torque can be entered in N·m, N·cm, oz·in or kg·cm, the units on many hobby motor datasheets (1 ozf = 0.27801385 N, 1 kgf = 9.80665 N). Switching the unit converts the value. The plot always uses N·m. Speeds are in rpm, and rpm × 2π/60 gives rad/s.',
+    keys: [['Tab to the plot', 'Then use the keys below'], ['← / →', 'Change the load torque by 1% of stall (Shift: 10%)']],
+    teacher: '<p>The motor list starts with one clearly labeled <strong>Example motor (not a real product)</strong>, with a 2 N·m stall torque and 300 rpm no-load speed. Add your class motors in Settings as JSON, for example <code>[{"label": "Kit motor A", "stallTorque": 0.35, "noLoadSpeed": 150}]</code>, with the torque in N·m and the speed in rpm. The list is kept in this browser; use Export in Settings to share it.</p>' +
+      '<p>Stage efficiency starts at 0.90, an example value; have students measure their own. The duty band edges (30% and 60%) come from one manufacturer\'s guidance and can be changed in Settings.</p>' +
+      '<p>Version 1 models a permanent-magnet brushed DC motor at constant voltage. PWM speed control, heating, acceleration time and brushless motors are not modeled.</p>' +
+      '<p>Predict first hides the output speed, the motor torque as a percent of stall and the recommended ratio, along with the operating point dot and everything that gives them away.</p>',
+    sources: [
+      { title: 'MIT D.C. motor torque/speed tutorial', url: 'http://lancet.mit.edu/motors/motors3.html' },
+      { title: 'MIT D.C. motor tutorial, power curve page', url: 'http://lancet.mit.edu/motors/motors4.html' },
+      { title: 'Motion Control Tips, torque equation and DC motors', url: 'https://www.motioncontroltips.com/torque-equation/' },
+      { title: 'Faulhaber, DC motor calculations', url: 'https://www.faulhaber.com/en/know-how/tutorials/dc-motor-tutorial-motor-calculations-for-coreless-brush-dc-motors/' },
+      { title: 'ISL Products, reading DC gear motor performance curves', url: 'https://islproducts.com/design-note/how-to-read-dc-motor-gear-motor-performance-curves/' },
+      { title: 'OpenStax University Physics Vol. 1, 10.8 Work and power for rotational motion', url: 'https://openstax.org/books/university-physics-volume-1/pages/10-8-work-and-power-for-rotational-motion' },
+    ],
+  };
+
+  /* ------------------------------------------------------------ the tool */
+  Shell.create({
+    tool: 'Motor and Drive Matcher', repo: 'MotorDriveMatcher', slug: 'motor-drive-matcher', version: VERSION, schemaVersion: 1,
+    subtitle: 'Engineering education · Motors and gearing',
+    defaultState: D.defaultState,
+    defaultSettings: { bandCont: 30, bandShort: 60, motors: null },
+    help: HELP,
+    imports: {
+      'drive-request': (app, text, name) => {
+        const req = Schemas.readDriveRequest(text);
+        const notes = D.applyDriveRequest(app.state, req);
+        buildStages(app); app.refreshFields(); app.changed();
+        app.toast('Loaded a drive request from the ' + req.value.source + '.' + (notes.length || req.warnings.length ? ' ' + notes.concat(req.warnings).join(' ') : ''), 6000);
+      },
+    },
+    afterLoad(app) {
+      const s = app.state;
+      s.nextId = Math.max(s.nextId || 1, ...s.stages.map(x => x.id + 1), ...(s.compare || []).map(x => x.id + 1), 1);
+      if (!Array.isArray(s.compare)) s.compare = [];
+      if ($('mdStages')) { buildStages(app); buildCompare(app); }
+    },
+    settingsExtra(app, box) {
+      box.innerHTML = '<h3>Duty bands (% of stall torque)</h3><div class="fld"><label for="mdBC">Continuous up to</label><span class="ctl"><input type="text" id="mdBC" inputmode="decimal"><span class="unit">%</span></span></div>' +
+        '<div class="fld"><label for="mdBS">Short periods up to</label><span class="ctl"><input type="text" id="mdBS" inputmode="decimal"><span class="unit">%</span></span></div><p class="note" id="mdBMsg"></p>' +
+        '<h3>Motor list</h3><p class="note">A JSON list of motors: label, stallTorque in N·m, noLoadSpeed in rpm.</p><textarea id="mdML" rows="6"></textarea>' +
+        '<div class="btnrow"><button class="btn" id="mdMLSave" type="button">Save motor list</button><button class="btn" id="mdMLReset" type="button">Reset to the example motor</button></div><p class="note" id="mdMLMsg"></p>';
+      $('mdBC').value = app.settings.bandCont; $('mdBS').value = app.settings.bandShort;
+      const bandsIn = () => {
+        const c = U.parseNumber($('mdBC').value), sh = U.parseNumber($('mdBS').value);
+        if (!(c > 0 && sh > c && sh < 100)) { $('mdBMsg').textContent = 'Band edges must satisfy 0 < continuous < short < 100.'; $('mdBMsg').className = 'note warn'; return; }
+        $('mdBMsg').textContent = 'Saved.'; $('mdBMsg').className = 'note';
+        app.settings.bandCont = c; app.settings.bandShort = sh; app.saveSettings(); app.render();
+      };
+      $('mdBC').addEventListener('input', bandsIn); $('mdBS').addEventListener('input', bandsIn);
+      $('mdML').value = JSON.stringify(motorList(app), null, 2);
+      $('mdMLSave').addEventListener('click', () => {
+        const r = D.readMotorList($('mdML').value);
+        if (r.error) { $('mdMLMsg').textContent = r.error; $('mdMLMsg').className = 'note warn'; return; }
+        app.settings.motors = r.list; app.saveSettings(); app.refreshFields(); app.render();
+        $('mdMLMsg').textContent = 'Saved ' + r.list.length + ' motor' + (r.list.length === 1 ? '' : 's') + '.'; $('mdMLMsg').className = 'note';
+      });
+      $('mdMLReset').addEventListener('click', () => { app.settings.motors = null; app.saveSettings(); $('mdML').value = JSON.stringify(D.DEFAULT_MOTORS, null, 2); app.refreshFields(); app.render(); });
+    },
+    build(app) {
+      const I = app.el.inputs, F = D.FIELDS;
+      const sec = html => { const d = document.createElement('div'); d.innerHTML = html; I.appendChild(d); return d; };
+      // Motor
+      const mo = sec('<div class="sec-h">Motor</div>');
+      app.selectField(mo, {
+        id: 'mdPre', label: 'Preset', options: a => motorList(a).map((m, i) => ['m' + i, m.label]).concat([['custom', 'Custom (my motor)']]),
+        get: a => a.state.preset === 'custom' ? 'custom' : (a.state.preset === 'example' ? 'm0' : a.state.preset),
+        set: (a, v) => {
+          if (v === 'custom') { a.state.preset = 'custom'; return; }
+          const m = motorList(a)[+v.slice(1)];
+          a.state.preset = (m.label === D.EXAMPLE_MOTOR.label) ? 'example' : v; a.state.label = m.label;
+          a.state.Ts = Number((m.stallTorque / D.TORQUE_UNITS[a.state.TsUnit]).toPrecision(10)); a.state.N0 = m.noLoadSpeed; a.refreshFields();
+        },
+      });
+      const ts = app.numField(mo, { id: 'mdTs', label: 'Stall torque T<sub>s</sub>', name: 'Stall torque', gt: 0, step: 0.1, check: (v, a) => D.tsCheck(v, a.state.TsUnit), get: a => a.state.Ts, set: (a, v) => { if (v !== a.state.Ts) { a.state.preset = 'custom'; a.state.label = 'My motor'; } a.state.Ts = v; } });
+      const unitSel = document.createElement('select'); unitSel.className = 'tsu'; unitSel.id = 'mdTsU'; unitSel.setAttribute('aria-label', 'Stall torque unit');
+      unitSel.innerHTML = Object.keys(D.TORQUE_UNITS).map(u => '<option>' + u + '</option>').join('');
+      ts.input.after(unitSel); ts.input.style.width = '64px';
+      unitSel.value = app.state.TsUnit;
+      unitSel.addEventListener('change', () => { D.convertTs(app.state, unitSel.value); app.refreshFields(); buildCompare(app); app.changed({ keepPrediction: true }); });
+      app.numField(mo, Object.assign({ id: 'mdN0', label: 'No-load speed N<sub>0</sub>', step: 10, get: a => a.state.N0, set: (a, v) => { if (v !== a.state.N0) { a.state.preset = 'custom'; a.state.label = 'My motor'; } a.state.N0 = v; } }, F.N0));
+      app.numField(mo, Object.assign({ id: 'mdK', label: 'Motors in parallel', step: 1, get: a => a.state.k, set: (a, v) => { a.state.k = v; } }, F.k));
+      // Gearing
+      sec('<div class="sec-h">Gearing</div><div id="mdStages"></div><p class="overall" id="mdOverall"></p><div class="btnrow"><button class="btn" id="mdAddSt" type="button">+ Add stage</button></div>');
+      $('mdAddSt').addEventListener('click', () => { const s = app.state; if (s.stages.length >= D.MAX_STAGES) return; s.stages.push({ id: s.nextId++, ratio: 1, efficiency: 0.9 }); buildStages(app); app.changed(); });
+      // Load
+      const ld = sec('<div class="sec-h">Load at the output</div>');
+      app.selectField(ld, { id: 'mdLT', label: 'Load type', options: [['torque', 'Torque'], ['force', 'Force at a radius'], ['lift', 'Lift a mass on a spool']], get: a => a.state.loadType, set: (a, v) => { a.state.loadType = v; } });
+      const lt = sec(''); lt.id = 'mdLTorque'; ld.appendChild(lt);
+      app.numField(lt, Object.assign({ id: 'mdTL', label: 'Load torque T<sub>L</sub>', step: 0.01, get: a => a.state.TL, set: (a, v) => { a.state.TL = v; } }, F.TL));
+      const lf = sec(''); lf.id = 'mdLForce'; ld.appendChild(lf);
+      app.numField(lf, Object.assign({ id: 'mdF', label: 'Force F', step: 0.1, get: a => a.state.F, set: (a, v) => { a.state.F = v; } }, F.F));
+      app.numField(lf, Object.assign({ id: 'mdRF', label: 'Radius r', step: 1, get: a => a.state.rF, set: (a, v) => { a.state.rF = v; } }, F.r));
+      const ll = sec(''); ll.id = 'mdLLift'; ld.appendChild(ll);
+      app.numField(ll, Object.assign({ id: 'mdM', label: 'Mass m', step: 0.1, get: a => a.state.m, set: (a, v) => { a.state.m = v; } }, F.m));
+      app.numField(ll, Object.assign({ id: 'mdRS', label: 'Spool radius r', step: 1, get: a => a.state.rS, set: (a, v) => { a.state.rS = v; } }, F.r));
+      sec('<p class="note" id="mdTLnote"></p>');
+      // Target
+      const tg = sec('<div class="sec-h">Target speed</div>');
+      app.checkField(tg, { id: 'mdUT', label: 'Solve for a target output speed', get: a => a.state.useTarget, set: (a, v) => { a.state.useTarget = v; } });
+      const tb = sec(''); tb.id = 'mdTBox'; tg.appendChild(tb);
+      app.numField(tb, Object.assign({ id: 'mdNt', label: 'Target N<sub>out</sub>', step: 1, get: a => a.state.Ntarget, set: (a, v) => { a.state.Ntarget = v; } }, F.Nt));
+      app.selectField(tb, { id: 'mdRnd', label: 'Round the ratio to', options: [['0.01', 'nearest 0.01'], ['0.1', 'nearest 0.1'], ['1', 'whole number'], ['pair', 'nearest gear pair'], ['exact', 'exact (no rounding)']], get: a => a.state.rounding, set: (a, v) => { a.state.rounding = v; } });
+      // Compare
+      sec('<div class="sec-h">Compare motors</div><div id="mdCmp"></div><div class="btnrow"><button class="btn" id="mdAddCmp" type="button">+ Add motor to compare</button></div><p class="note">Compared motors share the gearing and load.</p>');
+      $('mdAddCmp').addEventListener('click', () => { const s = app.state; if (s.compare.length >= D.MAX_COMPARE) return; const second = s.compare.length === 1; s.compare.push({ id: s.nextId++, label: 'Motor ' + (s.compare.length + 2), Ts: Number((s.Ts * (second ? 1.5 : 1)).toPrecision(4)), N0: Math.round(s.N0 * (second ? 0.8 : 1.5)) }); buildCompare(app); app.changed(); });
+      // Extension
+      const ex = sec('<div class="sec-h">Extension: electrical</div>');
+      app.checkField(ex, { id: 'mdEl', label: 'Show current and efficiency', get: a => a.state.electrical, set: (a, v) => { a.state.electrical = v; } });
+      const eb = sec(''); eb.id = 'mdElBox'; ex.appendChild(eb);
+      app.numField(eb, Object.assign({ id: 'mdV', label: 'Supply voltage V', step: 0.5, get: a => a.state.V, set: (a, v) => { a.state.V = v; } }, F.V));
+      app.numField(eb, Object.assign({ id: 'mdI0', label: 'No-load current I<sub>0</sub>', step: 0.05, check: (v, a) => v >= a.state.Is ? 'No-load current must be less than the stall current.' : null, get: a => a.state.I0, set: (a, v) => { a.state.I0 = v; } }, F.I0));
+      app.numField(eb, Object.assign({ id: 'mdIs', label: 'Stall current I<sub>s</sub>', step: 0.5, check: (v, a) => v <= a.state.I0 ? 'Stall current must be more than the no-load current.' : null, get: a => a.state.Is, set: (a, v) => { a.state.Is = v; } }, F.Is));
+      eb.insertAdjacentHTML('beforeend', '<p class="note">Values from your motor\'s datasheet. The starting values are examples.</p>');
+      // Stage
+      app.el.stage.innerHTML = '<div class="drawcard" id="mdDraw"></div><p class="cap">Drag across the plot, or use the arrow keys on it, to change the load torque. The operating point slides along the motor line. Compared motors use dashed and dotted lines.</p>';
+      wirePlot(app);
+      buildStages(app); buildCompare(app);
+    },
+    render(app) {
+      const s = app.state;
+      app.fields.forEach(f => { if (/^(mdI0|mdIs)$/.test(f.o.id)) f.revalidate(); });
+      SOL = app.hasInvalid() ? null : D.solve(s, bands(app));
+      $('mdLTorque').hidden = s.loadType !== 'torque';
+      $('mdLForce').hidden = s.loadType !== 'force';
+      $('mdLLift').hidden = s.loadType !== 'lift';
+      $('mdTBox').hidden = !s.useTarget;
+      $('mdElBox').hidden = !s.electrical;
+      $('mdTsU').value = s.TsUnit;
+      $('mdTLnote').textContent = SOL && s.loadType !== 'torque' ? 'Load torque T_L = ' + app.fmtU(SOL.TL, 'N·m') + '.' : '';
+      $('mdOverall').textContent = SOL ? 'Overall i = ' + app.fmt(SOL.g.i) + ', η = ' + app.fmt(SOL.g.eta) : '';
+      const card = $('mdDraw'), focus = document.activeElement && document.activeElement.id === 'mdSvg';
+      card.innerHTML = draw(app).svg;
+      if (focus) { const f = $('mdSvg'); if (f) f.focus({ preventScroll: true }); }
+      results(app);
+      app.setWorking(SOL ? D.working(SOL, app.fmt, app.fmtU) : []);
+      app.describe(SOL ? D.describe(SOL, app.fmtU, app.masked()) : 'The plot cannot update until the highlighted input is fixed.');
+    },
+    drawing: (app, opts) => draw(app, opts),
+    predictTargets: app => SOL ? D.targets(SOL) : [],
+    inputsSnapshot: app => D.snapshot(app.state),
+    report(app) {
+      const s = app.state, sol = SOL, fu = app.fmtU, m = app.masked();
+      const hide = v => m ? 'hidden until checked' : v;
+      const inputs = [['Motor', esc(s.label) + (s.preset === 'example' ? ' (example, not a real product)' : '')], ['Stall torque', fu(s.Ts, s.TsUnit) + (s.TsUnit !== 'N·m' && sol ? ' = ' + fu(sol.Ts, 'N·m') : '')], ['No-load speed', fu(s.N0, 'rpm')], ['Motors in parallel', String(s.k)]];
+      s.stages.forEach((x, i) => inputs.push(['Stage ' + (i + 1), 'ratio ' + app.fmt(x.ratio) + ', efficiency ' + app.fmt(x.efficiency)]));
+      inputs.push(['Load', s.loadType === 'torque' ? fu(s.TL, 'N·m') : s.loadType === 'force' ? fu(s.F, 'N') + ' at ' + fu(s.rF, 'mm') : fu(s.m, 'kg') + ' on a ' + fu(s.rS, 'mm') + ' spool']);
+      if (s.useTarget) inputs.push(['Target output speed', fu(s.Ntarget, 'rpm') + ', rounded to ' + s.rounding]);
+      if (s.electrical) inputs.push(['Electrical', fu(s.V, 'V') + ', I₀ ' + fu(s.I0, 'A') + ', I_s ' + fu(s.Is, 'A')]);
+      const outputs = [];
+      if (sol) {
+        const op = sol.op;
+        outputs.push(['Overall ratio, efficiency', app.fmt(sol.g.i) + ', ' + app.fmt(sol.g.eta)], ['Load torque T<sub>L</sub>', fu(sol.TL, 'N·m')], ['Motor torque', hide(fu(op.Tm, 'N·m') + ' (' + (app.fmt(op.pct) + '% of stall') + ')')], ['Motor speed', hide(fu(sol.Nm, 'rpm'))], ['Output speed', hide(fu(sol.Nout, 'rpm'))], ['Output power / peak', hide(fu(op.Pout, 'W')) + ' / ' + fu(sol.Pmax, 'W')], ['Duty range', hide(D.BAND_TEXT[op.band])]);
+        if (sol.solver) {
+          if (!sol.solver.feasible) outputs.push(['Ratio solver', hide('no ratio reaches the target at this load')]);
+          else outputs.push(['Recommended ratio', hide(app.fmt(sol.solver.iHigh))], ['Other root', hide(sol.solver.iLow ? app.fmt(sol.solver.iLow) + ' (' + (app.fmt(sol.solver.pctLow) + '% of stall') + ')' : 'none')], ['Rounded ratio', hide(app.fmt(sol.rounded.ratio) + ' → ' + fu(sol.rounded.Nout, 'rpm') + ', error ' + app.fmt(sol.rounded.err) + '%')]);
+        }
+        if (sol.elec) outputs.push(['Current, power in, efficiency', hide(fu(sol.elec.I, 'A') + ', ' + fu(sol.elec.Pin, 'W') + ', ' + (sol.elec.eff === null ? 'not defined' : (app.fmt(sol.elec.eff * 100) + '%')))]);
+        sol.compare.forEach(c => outputs.push(['Compare: ' + esc(c.c.label), hide((app.fmt(c.op.pct) + '% of stall') + ', ' + fu(c.Nout, 'rpm'))]));
+      } else outputs.push(['Results', app.invalidReason()]);
+      return { inputs, outputs, notes: s.preset === 'example' ? ['Example motor (not a real product).'] : [] };
+    },
+  });
+})();
+</script>
+</body>
+</html>
