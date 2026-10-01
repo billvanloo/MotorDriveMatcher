@@ -81,7 +81,7 @@ Source: OpenStax College Physics 2e, 5.1 Friction (f_s ≤ μ_s N).
 
 The coefficient comes from the students' own floor and tires, not a preset. Procedure for help:
 
-1. Program both motors to brake in hold mode so the wheels cannot turn.
+1. Set both motors' stopping mode to **hold** (not brake) and stop them, with the program still running. Hold uses the motor's position control to keep the wheels locked; brake only resists turning, so the wheels can creep under the pull and μ comes out low. The wheels must slide without turning; if they turn, the motors gave way first and the reading is not μ.
 2. Weigh the vehicle (m), and estimate f.
 3. Pull it horizontally with the Vernier sensor at axle height until it slides. Record the peak force F_slide.
 4. μ = F_slide / (f m g) if only the driven wheels are locked and the others roll freely; μ = F_slide / (m g) if every wheel is locked.
