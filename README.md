@@ -33,7 +33,7 @@ Part of **[Engineered by the Numbers](https://github.com/billvanloo/EngineeredBy
 - **Motor list.** It ships with one motor, clearly labeled *Example motor (not a real product)*: 2 N·m stall torque, 300 rpm no-load speed. Add your class motors in Settings as JSON, for example `[{"label": "Kit motor A", "stallTorque": 0.35, "noLoadSpeed": 150}]`, with torque in N·m and speed in rpm.
 - **Example efficiency.** Stage efficiency starts at 0.90, an example value; students should measure their own. The model treats efficiency as constant, and the help panel says so.
 - **Duty bands.** The 30% and 60% edges come from one gear motor maker's guidance (ISL Products). You can change them in Settings.
-- **VEX pull test.** The V5 presets use VEX's 2.1 N·m stall torque for the red 36:1 cartridge, scaled by the cartridge ratio (1.05 N·m green, 0.35 N·m blue); they are always listed, alongside your own motors. The 150 rpm velocity setting in the class program does not limit a static pull: the held motor runs at its current limit and gives stall torque. The help panel explains this and how students measure μ with the force sensor. A measured pull is saved in the prediction log (the `measured` column, with its percent difference from the model) on the student's pull prediction for the same design, so the log export shows predicted, model and measured side by side. Design notes are in [`docs/spec-vex-pull-test.md`](docs/spec-vex-pull-test.md).
+- **VEX pull test.** The V5 presets use VEX's 2.1 N·m stall torque for the red 36:1 cartridge, scaled by the cartridge ratio (1.05 N·m green, 0.35 N·m blue); they are always listed, alongside your own motors. The 150 rpm velocity setting in the class program does not limit a static pull: the held motor runs at its current limit and gives stall torque. The help panel explains this and how students measure μ with the force sensor, and links a VEXcode V5 Python program that sets both drive motors to hold ([`vex/HOLD_VEXcode_Project.v5python`](vex/HOLD_VEXcode_Project.v5python); motors in ports 1 and 2). The program is embedded in `index.html`, so the link works offline; `dev/verify-html.js` checks the two copies match. A measured pull is saved in the prediction log (the `measured` column, with its percent difference from the model) on the student's pull prediction for the same design, so the log export shows predicted, model and measured side by side. Design notes are in [`docs/spec-vex-pull-test.md`](docs/spec-vex-pull-test.md).
 - **Model scope.** Version 1 models a permanent-magnet brushed DC motor at constant voltage. PWM speed control, heating, acceleration time and brushless motors are not modeled.
 
 ## How it connects to the other tools
@@ -50,8 +50,8 @@ The formats are documented in [`EngineeredByTheNumbers/ecosystem/schemas.md`](ht
 
 ```
 node dev/test.js          # 84 checks: every spec test case MD-1 to MD-11 and VP-1 to VP-9, plus the interface helpers
-node dev/verify-html.js   # inline code in index.html matches dev/core.js and dev/vendor/; runs spec cases on it
-node dev/e2e.js           # 119 browser checks in headless Chromium (needs Playwright, see below)
+node dev/verify-html.js   # inline code in index.html matches dev/core.js, dev/vendor/ and vex/; runs spec cases on it
+node dev/e2e.js           # 120 browser checks in headless Chromium (needs Playwright, see below)
 ```
 
 - **Where the code lives.** `dev/core.js` is the tool's calculation layer: units, load types, rounding, working steps, and the drive-request and drive-result files. `dev/vendor/` holds shared code from the Engineered by the Numbers `ecosystem/`: the motor model, the tool shell, the prediction log and the file schemas. Don't edit vendored files here. Change them in the EngineeredByTheNumbers repo and run its `scripts/sync-vendor.js`.

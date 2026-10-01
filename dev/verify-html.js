@@ -14,6 +14,15 @@ const problems = vb.verify(root);
 problems.forEach(p => ok(p, false));
 ok('every inline block matches its tested copy', problems.length === 0);
 
+console.log('Embedded VEX program matches vex/HOLD_VEXcode_Project.v5python');
+{
+  const fs = require('fs');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const m = html.match(/const HOLD_PROGRAM = (".*");\n/);
+  const want = fs.readFileSync(path.join(root, 'vex', 'HOLD_VEXcode_Project.v5python'), 'utf8');
+  ok('HOLD program in index.html is the same as the file in vex/', !!m && JSON.parse(m[1]) === want);
+}
+
 console.log('Inline copy runs the spec cases');
 const MotorCore = vb.loadInline(root, 'vendor:motor-core.js');
 const DriveTool = vb.loadInline(root, 'core', { MotorCore });
