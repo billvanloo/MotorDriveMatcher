@@ -1,10 +1,12 @@
-// Motor and Drive Matcher: every test case in spec 02 §7 (MD-1 to MD-11), run
+// Motor and Drive Matcher: every test case in spec 02 §7 (MD-1 to MD-11) and
+// spec 02a §6 (VP-1 to VP-9), run
 // through the tool core in display units exactly as the interface uses it.
 // Run: node dev/test.js
 'use strict';
 const DriveTool = require('./core.js');
 const Schemas = require('./vendor/schemas.js');
 const Shell = require('./vendor/shell.js');
+const PredictionLog = require('./vendor/prediction-log.js');
 
 let passed = 0, failed = 0;
 function ok(name, cond, detail) {
@@ -83,6 +85,45 @@ console.log('MD-11: no load');
 const s11 = solve({ TL: 0 });
 near('MD-11 N_m = N₀', s11.Nm, 300); ok('MD-11 P_out = 0', s11.op.Pout === 0);
 ok('MD-11 no NaN or Infinity anywhere', !/NaN|Infinity/.test(JSON.stringify(s11) + DriveTool.working(s11, f, fu).map(x => x.sub + x.result).join('') + DriveTool.describe(s11, fu, false)));
+
+console.log('VP-1 to VP-9: VEX static pull test (spec 02a)');
+{
+  const V = id => DriveTool.VEX_MOTORS.find(m => m.id === id);
+  ok('VP-1 cartridges: red 2.1 N·m / 100 rpm, green 1.05 / 200, blue 0.35 / 600',
+    V('v5red').stallTorque === 2.1 && V('v5red').noLoadSpeed === 100 && V('v5green').stallTorque === 1.05 && V('v5green').noLoadSpeed === 200 && V('v5blue').stallTorque === 0.35 && V('v5blue').noLoadSpeed === 600);
+  const vex = o => solve(Object.assign({ preset: 'v5green', Ts: 1.05, N0: 200, k: 2, useTarget: false, pull: true }, o));
+  const one = (ratio, efficiency) => [{ id: 1, ratio, efficiency }];
+  near('VP-2 4" traction, i = 1, η = 1: F_motor', vex({ wheel: 't4', stages: one(1, 1) }).pull.Fmotor, 41.3);
+  ok('VP-2 no traction inputs: motor-only', vex({ wheel: 't4', stages: one(1, 1) }).pull.limit === 'motor-only');
+  const vp3 = { wheel: 't275', stages: one(3, 0.9), mass: 5, fDrive: 100, mu: 0.9 };
+  const p3 = vex(vp3).pull;
+  near('VP-3 F_motor', p3.Fmotor, 162); near('VP-3 F_traction', p3.Ftraction, 44.1); near('VP-3 F', p3.F, 44.1);
+  ok('VP-3 traction limits', p3.limit === 'traction');
+  near('VP-3 i*', p3.iStar, 0.816); near('VP-3 m*', p3.mStar, 18.4);
+  const p4 = vex(Object.assign({}, vp3, { fDrive: 60 })).pull;
+  near('VP-4 F_traction', p4.Ftraction, 26.5); near('VP-4 i*', p4.iStar, 0.489);
+  const p5 = vex({ wheel: 't4', stages: one(5, 0.81), mass: 8, fDrive: 100, mu: 0.9 }).pull;
+  near('VP-5 F_motor', p5.Fmotor, 167); near('VP-5 F_traction', p5.Ftraction, 70.6); ok('VP-5 traction limits', p5.limit === 'traction');
+  near('VP-6 200 mm omni: F_motor', vex({ wheel: 'omni200', stages: one(1, 1) }).pull.Fmotor, 66.0);
+  const s7 = vex(Object.assign({}, vp3, { mu: 0 })), p7 = s7.pull;
+  ok('VP-7 μ = 0: F_traction = 0, F = 0, traction limits, i* = 0, m* not defined', p7.Ftraction === 0 && p7.F === 0 && p7.limit === 'traction' && p7.iStar === 0 && p7.mStar === null);
+  ok('VP-7 no NaN or Infinity, m* explained', !/NaN|Infinity/.test(JSON.stringify(s7) + DriveTool.working(s7, f, fu).map(x => x.sub + x.result).join('') + DriveTool.describe(s7, fu, false)) && DriveTool.working(s7, f, fu).some(x => x.result === 'not defined: friction is zero'));
+  near('VP-8 measured 40 N against 44.1 N: −9.39%', vex(Object.assign({}, vp3, { Fmeas: 40 })).pull.measPct, -9.39);
+  const p9 = vex(Object.assign({}, vp3, { mass: null })).pull;
+  ok('VP-9 mass blank: motor-limited pull only', p9.limit === 'motor-only' && Math.abs(p9.F - 162.35) < 0.01 && p9.Ftraction === undefined);
+  ok('balanced within 1%', vex({ wheel: 't4', stages: one(1, 1), mass: 41.34 / (0.9 * 9.81), mu: 0.9 }).pull.limit === 'both');
+  ok('custom wheel radius', Math.abs(vex({ wheel: 'custom', rW: 100, stages: one(1, 1) }).pull.Fmotor - 21) < 1e-9);
+  const s3 = vex(vp3);
+  ok('pull is a predict-first target', DriveTool.targets(s3).some(t => t.key === 'pull' && Math.abs(t.model - p3.F) < 1e-9));
+  ok('the pull target carries the measured pull for the log', DriveTool.targets(vex(Object.assign({}, vp3, { Fmeas: 40 }))).find(t => t.key === 'pull').measured === 40 && DriveTool.targets(s3).find(t => t.key === 'pull').measured === null);
+  ok('no pull target when the pull test is off', !DriveTool.targets(solve({})).some(t => t.key === 'pull'));
+  const wt = DriveTool.working(s3, f, fu).map(x => x.title);
+  ok('working covers both limits, the minimum, i* and m*', ['Pull when the motors stall', 'Pull when the wheels slip', 'Predicted pull', 'Crossover ratio', 'Mass for the motors'].every(n => wt.some(t => t.startsWith(n))), wt.join(' | '));
+  ok('older state without pull fields still solves', !solve({}).pull && DriveTool.defaultState().pull === false);
+  const snapOn = DriveTool.snapshot(st(Object.assign({ pull: true }, vp3))).values;
+  ok('snapshot includes the pull inputs in SI only when the pull test is on', !('wheelRadius' in DriveTool.snapshot(st(vp3)).values) && Math.abs(snapOn.wheelRadius - 0.034925) < 1e-9 && snapOn.vehicleMass === 5 && snapOn.mu === 0.9);
+  ok('a different mass is a different problem in the log, a measured pull is not', PredictionLog.sandboxProblemId(snapOn) !== PredictionLog.sandboxProblemId(DriveTool.snapshot(st(Object.assign({ pull: true }, vp3, { mass: 6 }))).values) && PredictionLog.sandboxProblemId(snapOn) === PredictionLog.sandboxProblemId(DriveTool.snapshot(st(Object.assign({ pull: true }, vp3, { Fmeas: 40 }))).values));
+}
 
 console.log('Interface helpers');
 {
