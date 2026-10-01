@@ -22,6 +22,7 @@ Part of **[Engineered by the Numbers](https://github.com/billvanloo/EngineeredBy
 - **Plot.** The torque-speed line, the power curve, and duty bands (continuous up to 30% of stall, short use to 60%, avoid above). The operating point is marked. Drag across the plot, or use the arrow keys, to change the load.
 - **Ratio solver.** Both roots of the loaded-speed quadratic. It recommends the one that keeps the motor below half its stall torque, and says clearly when no ratio can reach the target. The recommendation can be rounded (0.01, 0.1, whole number, or the nearest two-gear pair), with the resulting speed error.
 - **Compare.** Up to two more motors on the same plot, in dashed and dotted lines.
+- **VEX pull test.** Predict how hard a VEX vehicle can pull on a fixed force sensor. Pick the V5 Smart Motor (11W) with a red, green or blue cartridge, a wheel (2.75" or 4" traction, 200 mm travel omni, or a measured radius), the vehicle mass, the share of weight on the driven wheels and the measured friction coefficient. The tool gives the motor-limited and traction-limited pulls, which one decides, the crossover ratio past which more gearing adds nothing, and the mass needed to use a given ratio. A chart shows pull against gear ratio, and a measured sensor reading is compared with the model.
 - **Extension.** Current and motor efficiency, from the supply voltage, no-load current and stall current.
 - **Predict first.** The output speed, the motor torque as a percent of stall, and the recommended ratio stay hidden until the student predicts and presses Check. Every attempt goes to the prediction log.
 - **Show the working.** T<sub>L</sub>, T<sub>m</sub>, percent of stall, N<sub>m</sub>, N<sub>out</sub>, and the quadratic with numbers substituted and both roots, each with its source.
@@ -32,6 +33,7 @@ Part of **[Engineered by the Numbers](https://github.com/billvanloo/EngineeredBy
 - **Motor list.** It ships with one motor, clearly labeled *Example motor (not a real product)*: 2 N·m stall torque, 300 rpm no-load speed. Add your class motors in Settings as JSON, for example `[{"label": "Kit motor A", "stallTorque": 0.35, "noLoadSpeed": 150}]`, with torque in N·m and speed in rpm.
 - **Example efficiency.** Stage efficiency starts at 0.90, an example value; students should measure their own. The model treats efficiency as constant, and the help panel says so.
 - **Duty bands.** The 30% and 60% edges come from one gear motor maker's guidance (ISL Products). You can change them in Settings.
+- **VEX pull test.** The V5 presets use VEX's 2.1 N·m stall torque for the red 36:1 cartridge, scaled by the cartridge ratio (1.05 N·m green, 0.35 N·m blue); they are always listed, alongside your own motors. The 150 rpm velocity setting in the class program does not limit a static pull: the held motor runs at its current limit and gives stall torque. The help panel explains this and how students measure μ with the force sensor. Design notes are in [`docs/spec-vex-pull-test.md`](docs/spec-vex-pull-test.md).
 - **Model scope.** Version 1 models a permanent-magnet brushed DC motor at constant voltage. PWM speed control, heating, acceleration time and brushless motors are not modeled.
 
 ## How it connects to the other tools
@@ -47,9 +49,9 @@ The formats are documented in [`EngineeredByTheNumbers/ecosystem/schemas.md`](ht
 ## Development
 
 ```
-node dev/test.js          # 56 checks: every spec test case MD-1 to MD-11, plus the interface helpers
+node dev/test.js          # 82 checks: every spec test case MD-1 to MD-11 and VP-1 to VP-9, plus the interface helpers
 node dev/verify-html.js   # inline code in index.html matches dev/core.js and dev/vendor/; runs spec cases on it
-node dev/e2e.js           # 96 browser checks in headless Chromium (needs Playwright, see below)
+node dev/e2e.js           # 114 browser checks in headless Chromium (needs Playwright, see below)
 ```
 
 - **Where the code lives.** `dev/core.js` is the tool's calculation layer: units, load types, rounding, working steps, and the drive-request and drive-result files. `dev/vendor/` holds shared code from the Engineered by the Numbers `ecosystem/`: the motor model, the tool shell, the prediction log and the file schemas. Don't edit vendored files here. Change them in the EngineeredByTheNumbers repo and run its `scripts/sync-vendor.js`.

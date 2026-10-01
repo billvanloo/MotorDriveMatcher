@@ -3,7 +3,8 @@
 // cousins, rpm, mm, kg) to SI, runs the operating point, the ratio solver and
 // the electrical extension, rounds the recommended ratio, builds the
 // show-the-working steps and the description, and reads and writes the
-// drive-request and drive-result files. Pure functions; tested in dev/test.js.
+// drive-request and drive-result files, and the VEX static pull test (spec 02a).
+// Pure functions; tested in dev/test.js.
 const DriveTool = (function () {
   'use strict';
   const MC = typeof MotorCore !== 'undefined' ? MotorCore : require('./vendor/motor-core.js');
@@ -23,6 +24,24 @@ const DriveTool = (function () {
     faul: 'Faulhaber, DC motor calculations',
     isl: 'ISL Products, reading DC gear motor performance curves',
     ostx: 'OpenStax University Physics Vol. 1, 10.8',
+    vex: 'VEX Library, Understanding V5 Smart Motor (11W) Performance',
+    fric: 'OpenStax College Physics 2e, 5.1',
+  };
+
+  // VEX V5 Smart Motor (11W) by cartridge (spec 02a §3.1): 2.1 N·m stall with the
+  // 36:1 cartridge, scaled by the cartridge ratio; free speed is the software limit.
+  const VEX_MOTORS = [
+    { id: 'v5red', label: 'VEX V5 Smart Motor (11W), red 36:1', stallTorque: 2.1, noLoadSpeed: 100 },
+    { id: 'v5green', label: 'VEX V5 Smart Motor (11W), green 18:1', stallTorque: 1.05, noLoadSpeed: 200 },
+    { id: 'v5blue', label: 'VEX V5 Smart Motor (11W), blue 6:1', stallTorque: 0.35, noLoadSpeed: 600 },
+  ];
+  const isVex = s => /^v5/.test(s.preset);
+  // Wheel presets (spec 02a §4), radius in mm. The omni wheel travels 200 mm per turn.
+  const WHEELS = {
+    t275: { label: '2.75" traction wheel', r: 2.75 * 25.4 / 2 },
+    t4: { label: '4" traction wheel', r: 4 * 25.4 / 2 },
+    omni200: { label: '200 mm travel omni wheel (64 mm)', r: 200 / (2 * Math.PI) },
+    custom: { label: 'Custom radius', r: null },
   };
 
   const MAX_STAGES = 4, MAX_COMPARE = 2;
@@ -35,6 +54,7 @@ const DriveTool = (function () {
       useTarget: true, Ntarget: 95.5, rounding: '0.01',
       electrical: false, V: 12, I0: 0.2, Is: 10,
       compare: [],
+      pull: false, wheel: 't4', rW: 50.8, mass: null, fDrive: 100, mu: null, Fmeas: null,
     };
   }
 
@@ -52,6 +72,11 @@ const DriveTool = (function () {
     V: { name: 'Voltage', unit: 'V', gt: 0, max: 1000 },
     I0: { name: 'No-load current', unit: 'A', min: 0, max: 1000 },
     Is: { name: 'Stall current', unit: 'A', gt: 0, max: 5000 },
+    rW: { name: 'Wheel radius', unit: 'mm', min: 5, max: 200 },
+    mass: { name: 'Vehicle mass', unit: 'kg', min: 0.1, max: 100 },
+    fDrive: { name: 'Weight on driven wheels', unit: '%', min: 1, max: 100 },
+    mu: { name: 'Coefficient of friction', min: 0, max: 2 },
+    Fmeas: { name: 'Measured pull', unit: 'N', min: 0, max: 2000 },
   };
   // Stall torque range 0.001 to 500 N·m, checked in the unit the student chose.
   function tsCheck(v, unit) {
@@ -111,6 +136,7 @@ const DriveTool = (function () {
         out.rounded = Object.assign(rr, { op: at, Nout: rpm(at.wout), err: (rpm(at.wout) - s.Ntarget) / s.Ntarget * 100 });
       }
     }
+    if (s.pull) out.pull = pullTest(s, out.TsTotal, g);
     if (s.electrical) out.elec = MC.electrical({ V: s.V, I0: s.I0, Is: s.Is, Ts, k: s.k, Tm: op.Tm, wm: op.wm });
     out.compare = (s.compare || []).map(c => {
       const o = MC.operate({ Ts: c.Ts * TORQUE_UNITS[s.TsUnit], w0: rad(c.N0), k: 1, i: g.i, eta: g.eta, TL: L.TL, bands });
@@ -118,6 +144,27 @@ const DriveTool = (function () {
     });
     return out;
   }
+
+  /* ------------------------------------------------------------ VEX static pull (spec 02a §3) */
+  // Motor-limited pull k·Ts·i·η/r, traction-limited pull μ·f·m·g, the smaller of the two,
+  // the crossover ratio and the mass that would make the motors the limit.
+  const wheelR = s => (s.wheel === 'custom' || !WHEELS[s.wheel] ? s.rW : WHEELS[s.wheel].r) / 1000;
+  function pullTest(s, TsTotal, g) {
+    const r = wheelR(s);
+    const out = { r, Fmotor: TsTotal * g.i * g.eta / r, slope: TsTotal * g.eta / r, traction: isNum(s.mass) && isNum(s.mu) };
+    if (out.traction) {
+      const f = s.fDrive / 100;
+      out.N = f * s.mass * MC.G;
+      out.Ftraction = s.mu * out.N;
+      out.F = Math.min(out.Fmotor, out.Ftraction);
+      out.limit = Math.abs(out.Fmotor - out.Ftraction) <= 0.01 * Math.max(out.Fmotor, out.Ftraction) ? 'both' : out.Fmotor < out.Ftraction ? 'motor' : 'traction';
+      out.iStar = out.Ftraction / out.slope;
+      out.mStar = s.mu > 0 ? out.Fmotor / (s.mu * f * MC.G) : null;
+    } else { out.F = out.Fmotor; out.limit = 'motor-only'; }
+    if (isNum(s.Fmeas)) out.measPct = out.F > 0 ? (s.Fmeas - out.F) / out.F * 100 : null;
+    return out;
+  }
+  const LIMIT_TEXT = { motor: 'Motors stall first', traction: 'Wheels slip first', both: 'Both, balanced', 'motor-only': 'Motors (traction not entered)' };
 
   const BAND_TEXT = { continuous: 'Continuous', short: 'Short periods only', avoid: 'Avoid', stalled: 'Stalled' };
 
@@ -129,7 +176,7 @@ const DriveTool = (function () {
       { key: 'Nout', quantity: 'output speed N_out', label: 'Output speed N<sub>out</sub>', unit: 'rpm', model: sol.Nout },
       { key: 'pct', quantity: 'motor torque % of stall', label: 'T<sub>m</sub> as % of stall', unit: '%', model: sol.op.pct },
       { key: 'ratio', quantity: 'recommended ratio i', label: 'Recommended ratio i', unit: '', model: sv && sv.feasible ? sv.iHigh : null, reason: !s.useTarget ? 'no target speed set' : 'this motor cannot reach that speed at that load' },
-    ];
+    ].concat(sol.pull ? [{ key: 'pull', quantity: 'maximum static pull F', label: 'Maximum pull F', unit: 'N', model: sol.pull.F }] : []);
   }
 
   function snapshot(s) {
@@ -140,6 +187,7 @@ const DriveTool = (function () {
         stages: s.stages.map(x => ({ ratio: x.ratio, efficiency: x.efficiency })),
         loadType: s.loadType, loadTorque: L.TL, radius: L.r, targetSpeed: s.useTarget ? rad(s.Ntarget) : null,
       },
+      ...(s.pull ? { pull: { wheelRadius: wheelR(s), vehicleMass: s.mass, drivenFraction: s.fDrive / 100, mu: s.mu } } : {}),
       units: { stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' },
     };
   }
@@ -171,6 +219,16 @@ const DriveTool = (function () {
         if (sol.rounded) steps.push({ title: 'Rounded ratio (' + sol.rounded.text + ')', formula: 'N<sub>out</sub> at the rounded ratio, from the same motor line', result: 'i = ' + f(sol.rounded.ratio) + ' gives ' + fu(sol.rounded.Nout, 'rpm') + ', ' + (sol.rounded.err >= 0 ? '+' : '') + (f(sol.rounded.err) + '%') + ' from the target' });
       }
     }
+    if (sol.pull) {
+      const pu = sol.pull;
+      steps.push({ title: 'Pull when the motors stall', formula: 'F<sub>motor</sub> = k T<sub>s</sub> i η / r', sub: fu(sol.TsTotal, 'N·m') + ' × ' + f(sol.g.i) + ' × ' + f(sol.g.eta) + ' / ' + fu(pu.r, 'm'), result: fu(pu.Fmotor, 'N'), source: SOURCES.ostx });
+      if (pu.traction) {
+        steps.push({ title: 'Pull when the wheels slip', formula: 'F<sub>traction</sub> = μ f m g', sub: f(s.mu) + ' × ' + f(s.fDrive / 100) + ' × ' + fu(s.mass, 'kg') + ' × 9.81 m/s²', result: fu(pu.Ftraction, 'N'), source: SOURCES.fric });
+        steps.push({ title: 'Predicted pull', formula: 'F = min(F<sub>motor</sub>, F<sub>traction</sub>)', sub: 'min(' + fu(pu.Fmotor, 'N') + ', ' + fu(pu.Ftraction, 'N') + ')', result: fu(pu.F, 'N') + ', ' + LIMIT_TEXT[pu.limit].toLowerCase() });
+        steps.push({ title: 'Crossover ratio', formula: 'i* = μ f m g r / (k T<sub>s</sub> η)', sub: fu(pu.Ftraction, 'N') + ' × ' + fu(pu.r, 'm') + ' / (' + fu(sol.TsTotal, 'N·m') + ' × ' + f(sol.g.eta) + ')', result: f(pu.iStar) + '. Above this ratio, more gearing adds no pull.' });
+        steps.push({ title: 'Mass for the motors to be the limit at this ratio', formula: 'm* = F<sub>motor</sub> / (μ f g)', sub: pu.mStar === null ? '' : fu(pu.Fmotor, 'N') + ' / (' + f(s.mu) + ' × ' + f(s.fDrive / 100) + ' × 9.81 m/s²)', result: pu.mStar === null ? 'not defined: friction is zero' : fu(pu.mStar, 'kg'), source: SOURCES.fric });
+      }
+    }
     if (sol.elec) {
       const e = sol.elec;
       steps.push({ title: 'Current', formula: 'I = I<sub>0</sub> + (I<sub>s</sub> − I<sub>0</sub>) T<sub>m</sub> / T<sub>s</sub>' + (s.k > 1 ? ', per motor, × k motors' : ''), sub: fu(s.I0, 'A') + ' + (' + fu(s.Is, 'A') + ' − ' + fu(s.I0, 'A') + ') × ' + fu(op.Tm / s.k, 'N·m') + ' / ' + fu(sol.Ts, 'N·m'), result: fu(e.I, 'A'), source: SOURCES.faul });
@@ -189,6 +247,7 @@ const DriveTool = (function () {
     else t += ' Operating point: motor torque ' + fu(op.Tm, 'newton meters') + ', ' + fu(op.pct, 'percent') + ' of stall, ' + BAND_TEXT[op.band].toLowerCase() + ' duty; motor speed ' + fu(sol.Nm, 'rpm') + ', output ' + fu(sol.Nout, 'rpm') + '.';
     if (sol.solver && sol.solver.feasible) t += ' Recommended ratio ' + fu(sol.solver.iHigh, '') + '.';
     if (sol.solver && !sol.solver.feasible) t += ' No ratio reaches the target speed.';
+    if (sol.pull) t += ' Pull test: ' + fu(sol.pull.F, 'newtons') + ', ' + LIMIT_TEXT[sol.pull.limit].toLowerCase() + '.';
     return t.replace(/ \./g, '.').replace(/ ,/g, ',');
   }
 
@@ -234,6 +293,7 @@ const DriveTool = (function () {
 
   return {
     TORQUE_UNITS, EXAMPLE_MOTOR, SOURCES, MAX_STAGES, MAX_COMPARE, FIELDS, BAND_TEXT, DEFAULT_MOTORS,
+    VEX_MOTORS, WHEELS, LIMIT_TEXT, isVex, wheelR, pullTest,
     defaultState, tsCheck, TsNm, convertTs, load, setLoadTorque, roundRatio, solve, targets, snapshot,
     working, describe, applyDriveRequest, driveResult, readMotorList,
   };

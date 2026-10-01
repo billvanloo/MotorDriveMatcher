@@ -97,7 +97,7 @@ Omni wheels contact the floor through their rollers, so their μ is usually diff
 | Wheel | r | mm | 5 to 200 | 4" traction (50.8) | Presets below, or custom radius |
 | Vehicle mass | m | kg | 0.1 to 100 | blank | Measured on a scale |
 | Weight on driven wheels | f | % | 1 to 100 | 100 | |
-| Coefficient of friction | μ | | 0.01 to 2 | blank | Measured, see 3.5 |
+| Coefficient of friction | μ | | 0 to 2 | blank | Measured, see 3.5 |
 | Measured pull | F_meas | N | 0 to 2000 | blank | Optional, from the Vernier sensor |
 
 Wheel presets (nominal diameter; students should measure their own):
@@ -158,8 +158,8 @@ k = 2, T_s = 1.05 N·m (green) unless stated.
 ## 8. Open questions for review
 
 1. ~~Green cartridge stall torque.~~ Resolved: 1.05 N·m, confirmed against the VEX chart (3.1).
-2. **"200 mm omni".** Read here as VEX's 200 mm travel omni wheel (200 mm per turn). If it means 200 mm diameter, the radius is 100 mm.
-3. **Measured pull in the prediction log.** Should a measured value be logged as its own record type, or only shown on screen? This may need a change to the shared `prediction-log` schema upstream.
+2. ~~"200 mm omni".~~ Resolved: 200 mm of travel per turn, 64 mm diameter. Radius 200 mm ÷ 2π = 31.8 mm.
+3. **Measured pull in the prediction log.** Version 1 of this addendum shows the measured value on screen and saves it in the design file only. Logging it would need a change to the shared `prediction-log` schema upstream; decide later.
 
 ## 9. Sources
 
