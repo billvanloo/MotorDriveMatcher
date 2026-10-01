@@ -37,12 +37,22 @@ Students can:
 
 ### 3.1 Motor
 
-- V5 Smart Motor (11 W): 2.1 N·m stall torque with the 36:1 red cartridge (VEX). Torque scales with the cartridge ratio, so:
-  - red 36:1: T_s = 2.1 N·m, N₀ = 100 rpm
-  - green 18:1: T_s = 1.05 N·m, N₀ = 200 rpm
-  - blue 6:1: T_s = 0.35 N·m, N₀ = 600 rpm
-- The V5 is not a straight-line motor. VEX's performance chart (torque, current and power against percent of maximum rpm) shows torque roughly flat from stall up to about 60% of maximum rpm, then falling. A static pull happens at zero speed, inside the flat region, so the stall torque above is the value that matters. The straight-line plot in `spec.md` 3.1 understates the V5 between stall and about 60% speed; help text must say this when the V5 preset is in use.
-- The motor's own controller limits current to 2.5 A. In velocity mode, a tethered vehicle cannot reach 150 rpm, so the controller drives full current and the motor delivers its stall torque. **The speed setpoint does not enter the static pull calculation.** Help text must say this.
+Values from VEX, *Understanding V5 Smart Motor (11W) Performance* (VEX Library, last updated November 20, 2025). The article gives the red cartridge stall torque in its spec table and plots torque for all three cartridges against percent of maximum rpm.
+
+| Cartridge | T_s | N₀ (software limit) | Chart reading at 0 rpm |
+|---|---|---|---|
+| red 36:1 | 2.1 N·m (spec table) | 100 rpm | about 2.13 N·m |
+| green 18:1 | 1.05 N·m (2.1 ÷ 2) | 200 rpm | about 1.06 N·m |
+| blue 6:1 | 0.35 N·m (2.1 ÷ 6) | 600 rpm | about 0.36 N·m |
+
+The tool uses the scaled values in the T_s column. The chart readings agree within 2%.
+
+- **Curve shape.** The V5 is not a straight-line motor. Current is held at 2.5 A and torque is nearly flat from stall to about 55–60% of maximum rpm, then falls to about 33% of stall torque at maximum rpm. Power peaks at about 12.75 W near 65% of maximum rpm, and the motor gives 11 W or more across about 30% of its speed range. A static pull happens at zero speed, in the flat region, so T_s is the value that matters. The straight-line plot in `spec.md` 3.1 understates the V5 between stall and about 60% speed; help text must say this when the V5 preset is in use.
+- **Current limit and velocity mode.** Stall current is limited to 2.5 A. In velocity mode, a tethered vehicle cannot reach 150 rpm, so the motor's controller drives full current and the motor delivers its stall torque. **The speed setpoint does not enter the static pull calculation.** Help text must say this.
+- **Things that lower the pull,** for the help panel's checklist:
+  - *Torque limit in the program.* `Motor.setTorqueLimit()` caps the torque. The pull program must not set one below 100%.
+  - *Motor temperature.* VEXos cuts current in four steps as the motor heats: 50%, 25%, 12.5%, then 0%. A hot motor gives half the pull or less. Let motors cool between trials and record the peak in the first few seconds.
+  - *Battery.* Does not matter: the motor runs below the battery's minimum voltage and holds power within ±1%.
 - Two motors drive one vehicle: k = 2, treated as motors in parallel (`spec.md` 3.1).
 
 ### 3.2 Motor-limited pull
@@ -147,13 +157,14 @@ k = 2, T_s = 1.05 N·m (green) unless stated.
 
 ## 8. Open questions for review
 
-1. **Green cartridge stall torque.** 1.05 N·m is derived by scaling VEX's published 2.1 N·m (red, 36:1) by the cartridge ratio. The VEX knowledge base article (Understanding V5 Smart Motor (11W) Performance) has the chart but could not be fetched from the build environment. Read the green stall torque off that chart to confirm, or have students measure it.
+1. ~~Green cartridge stall torque.~~ Resolved: 1.05 N·m, confirmed against the VEX chart (3.1).
 2. **"200 mm omni".** Read here as VEX's 200 mm travel omni wheel (200 mm per turn). If it means 200 mm diameter, the radius is 100 mm.
 3. **Measured pull in the prediction log.** Should a measured value be logged as its own record type, or only shown on screen? This may need a change to the shared `prediction-log` schema upstream.
 
 ## 9. Sources
 
-- VEX Robotics, V5 Smart Motor (11 W) specifications: https://www.vexrobotics.com/276-4840.html and https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-11W-Performance
+- VEX Library, Understanding V5 Smart Motor (11W) Performance (last updated November 20, 2025): https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-11W-Performance
+- VEX Robotics, V5 Smart Motor product page: https://www.vexrobotics.com/276-4840.html
 - BLRS Wiki (Purdue SIGBots), VEX motors, current limit and velocity control: https://github.com/purduesigbots/BLRS-Wiki/blob/master/vex-electronics/vex-electronics/motors.md
 - OpenStax College Physics 2e, 5.1 Friction: https://openstax.org/books/college-physics-2e/pages/5-1-friction
 - Torque and power sources as in `spec.md` 9.
