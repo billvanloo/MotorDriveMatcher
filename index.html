@@ -257,7 +257,7 @@ kbd{font:12px var(--font-mono);border:1px solid var(--steel-edge);border-bottom-
 <noscript>The Motor and Drive Matcher needs JavaScript turned on.</noscript>
 <script>
 /* BEGIN vendor:prediction-log.js */
-// ecosystem/prediction-log.js v1.0.0
+// ecosystem/prediction-log.js v1.1.0
 // Prediction Log record format (spec 07 Part A). Pure functions, no DOM.
 // Every tool writes records through this module so the Collector can merge them.
 const PredictionLog = (function () {
@@ -338,6 +338,21 @@ const PredictionLog = (function () {
     if (measured !== undefined) { out.measured = isNum(measured) ? measured : null; out.pctMeasVsModel = pctDiff(out.measured, out.model); }
     if (note !== undefined) out.note = String(note);
     return out;
+  }
+
+  // Record a measured value (and/or note) on the most recent record that matches
+  // student, problemId and quantity (and tool, when given). Returns the new list and
+  // the index changed, or index -1 when nothing matches. The list passed in is not changed.
+  function annotateLatest(records, match, fields) {
+    for (let i = records.length - 1; i >= 0; i--) {
+      const r = records[i];
+      if (r.student === match.student && r.problemId === match.problemId && r.quantity === match.quantity && (!match.tool || r.tool === match.tool)) {
+        const out = records.slice();
+        out[i] = annotate(r, fields);
+        return { records: out, index: i };
+      }
+    }
+    return { records, index: -1 };
   }
 
   /* ---------------------------------------------------------------- JSON */
@@ -458,7 +473,7 @@ const PredictionLog = (function () {
   return {
     SCHEMA, SCHEMA_VERSION, FIELDS, NEWER_WARNING,
     pctDiff, isoLocal, shortHash, stableStringify, sandboxProblemId, nextAttempt,
-    makeRecord, annotate, toJSON, toCSV, fromCSV, fromJSON, parseFile, parseCSVRows, dedupe, toTSVRow,
+    makeRecord, annotate, annotateLatest, toJSON, toCSV, fromCSV, fromJSON, parseFile, parseCSVRows, dedupe, toTSVRow,
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = PredictionLog;
@@ -745,7 +760,7 @@ const MotorCore = (function () {
 if (typeof module !== 'undefined' && module.exports) module.exports = MotorCore;
 /* END vendor:motor-core.js */
 /* BEGIN vendor:shell.js */
-// ecosystem/shell/shell.js v1.0.0
+// ecosystem/shell/shell.js v1.1.0
 // Shared tool frame for the Engineered by the Numbers tools (spec 00 §2–8):
 // header, footer, help, themes, small-screen notice, predict-first, show the
 // working, field validation, save/load, PNG export, printable report, the
@@ -1170,7 +1185,7 @@ const Shell = (function () {
         const model = isNum(t.model) ? t.model : null;
         const rec = PL.makeRecord({
           tool: cfg.tool, toolVersion: cfg.version, student, team: app.settings.team, classPeriod: app.settings.classPeriod,
-          problemId: pid, quantity: t.quantity || t.key, unit: t.unit || '', predicted: p, model,
+          problemId: pid, quantity: t.quantity || t.key, unit: t.unit || '', predicted: p, model, measured: t.measured,
           attempt: PL.nextAttempt(app.log, student, pid, t.quantity || t.key), inputs: snap,
         });
         recs.push(rec);
@@ -1186,6 +1201,15 @@ const Shell = (function () {
       const again = $('shAgain'); if (again) again.focus();
     }
     app.check = check;
+    // Attach a measured value to this student's latest prediction of a quantity for the
+    // current inputs (a target's `quantity`). Returns the updated record, or null when
+    // there is no such prediction yet. A target can also carry `measured` at Check.
+    app.recordMeasured = (quantity, measured) => {
+      const res = PL.annotateLatest(app.log, { student: app.student() || 'unnamed', problemId: problemId(), quantity, tool: cfg.tool }, { measured });
+      if (res.index < 0) return null;
+      app.log = res.records; saveLog();
+      return app.log[res.index];
+    };
 
     /* =================================================================
        SHOW THE WORKING (00 §5)
@@ -1613,6 +1637,7 @@ const DriveTool = (function () {
     if (isNum(s.Fmeas)) out.measPct = out.F > 0 ? (s.Fmeas - out.F) / out.F * 100 : null;
     return out;
   }
+  const PULL_QUANTITY = 'maximum static pull F';
   const LIMIT_TEXT = { motor: 'Motors stall first', traction: 'Wheels slip first', both: 'Both, balanced', 'motor-only': 'Motors (traction not entered)' };
 
   const BAND_TEXT = { continuous: 'Continuous', short: 'Short periods only', avoid: 'Avoid', stalled: 'Stalled' };
@@ -1625,7 +1650,7 @@ const DriveTool = (function () {
       { key: 'Nout', quantity: 'output speed N_out', label: 'Output speed N<sub>out</sub>', unit: 'rpm', model: sol.Nout },
       { key: 'pct', quantity: 'motor torque % of stall', label: 'T<sub>m</sub> as % of stall', unit: '%', model: sol.op.pct },
       { key: 'ratio', quantity: 'recommended ratio i', label: 'Recommended ratio i', unit: '', model: sv && sv.feasible ? sv.iHigh : null, reason: !s.useTarget ? 'no target speed set' : 'this motor cannot reach that speed at that load' },
-    ].concat(sol.pull ? [{ key: 'pull', quantity: 'maximum static pull F', label: 'Maximum pull F', unit: 'N', model: sol.pull.F }] : []);
+    ].concat(sol.pull ? [{ key: 'pull', quantity: PULL_QUANTITY, label: 'Maximum pull F', unit: 'N', model: sol.pull.F, measured: isNum(s.Fmeas) ? s.Fmeas : null }] : []);
   }
 
   function snapshot(s) {
@@ -1635,9 +1660,9 @@ const DriveTool = (function () {
         stallTorque: TsNm(s), noLoadSpeed: rad(s.N0), motors: s.k,
         stages: s.stages.map(x => ({ ratio: x.ratio, efficiency: x.efficiency })),
         loadType: s.loadType, loadTorque: L.TL, radius: L.r, targetSpeed: s.useTarget ? rad(s.Ntarget) : null,
+        ...(s.pull ? { wheelRadius: wheelR(s), vehicleMass: s.mass, drivenFraction: s.fDrive / 100, mu: s.mu } : {}),
       },
-      ...(s.pull ? { pull: { wheelRadius: wheelR(s), vehicleMass: s.mass, drivenFraction: s.fDrive / 100, mu: s.mu } } : {}),
-      units: { stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' },
+      units: Object.assign({ stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' }, s.pull ? { wheelRadius: 'm', vehicleMass: 'kg' } : {}),
     };
   }
 
@@ -1742,7 +1767,7 @@ const DriveTool = (function () {
 
   return {
     TORQUE_UNITS, EXAMPLE_MOTOR, SOURCES, MAX_STAGES, MAX_COMPARE, FIELDS, BAND_TEXT, DEFAULT_MOTORS,
-    VEX_MOTORS, WHEELS, LIMIT_TEXT, isVex, wheelR, pullTest,
+    VEX_MOTORS, WHEELS, LIMIT_TEXT, PULL_QUANTITY, isVex, wheelR, pullTest,
     defaultState, tsCheck, TsNm, convertTs, load, setLoadTorque, roundRatio, solve, targets, snapshot,
     working, describe, applyDriveRequest, driveResult, readMotorList,
   };
@@ -1777,11 +1802,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
     const spec = { name: o.name, unit: o.unit, min: o.min, max: o.max };
     const ok = () => { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; };
     function commit() {
-      if (input.value.trim() === '') { ok(); o.set(app, null); app.changed(); return; }
+      const opts = o.keepPrediction ? { keepPrediction: true } : undefined;
+      if (input.value.trim() === '') { ok(); o.set(app, null); app.changed(opts); return; }
       const r = U.validateNumber(input.value, spec);
       if (r.error) { err.textContent = r.error; input.setAttribute('aria-invalid', 'true'); app.invalid[o.id] = r.error; }
       else { ok(); o.set(app, r.value); }
-      app.changed();
+      app.changed(opts);
     }
     input.addEventListener('input', commit);
     const field = {
@@ -2048,7 +2074,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
         if (pu.limit === 'traction') row3('Mass for the motors to limit', sh(pu.mStar === null ? '<span class="reason">not defined: friction is zero</span>' : esc(fu(pu.mStar, 'kg')) + ' <span class="reason">on the driven wheels, at this ratio</span>'));
       } else row3('Traction-limited pull', '<span class="reason">enter the vehicle mass and μ</span>');
       html += '<div class="sec-h">Pull test (static)</div><table class="ro">' + r3.join('') + '</table>';
-      if (s.Fmeas !== null && s.Fmeas !== undefined && !app.masked()) html += '<p class="note">You measured ' + esc(fu(s.Fmeas, 'N')) + '. The model gives ' + esc(fu(pu.F, 'N')) + ' (' + (pu.measPct === null ? 'difference not defined: the model gives 0 N' : esc((pu.measPct > 0 ? '+' : '') + app.fmt(pu.measPct)) + '% difference') + ').</p>';
+      if (s.Fmeas !== null && s.Fmeas !== undefined && !app.masked()) {
+        html += '<p class="note">You measured ' + esc(fu(s.Fmeas, 'N')) + '. The model gives ' + esc(fu(pu.F, 'N')) + ' (' + (pu.measPct === null ? 'difference not defined: the model gives 0 N' : esc((pu.measPct > 0 ? '+' : '') + app.fmt(pu.measPct)) + '% difference') + ').</p>';
+        html += pullLogged(app) ? '<p class="note" id="mdFmLog">✓ Saved in the prediction log with your pull prediction for this design.</p>' :
+          '<p class="note" id="mdFmLog">Not in the prediction log yet. Turn on Predict first and check a pull prediction for this design; this reading is saved with it.</p>';
+      }
     }
     if (sol.compare.length) {
       html += '<div class="sec-h">Compare motors</div><table class="cmp-t"><tr><th>Motor</th><th>% stall</th><th>N<sub>out</sub> (rpm)</th><th>Duty</th></tr>' +
@@ -2073,6 +2103,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
     });
   }
 
+  // Is the measured pull on the student's latest pull prediction for this design?
+  // Same problem ID the shell uses for sandbox records.
+  function pullLogged(app) {
+    const pid = PredictionLog.sandboxProblemId(D.snapshot(app.state).values), who = app.student() || 'unnamed';
+    for (let i = app.log.length - 1; i >= 0; i--) {
+      const r = app.log[i];
+      if (r.student === who && r.problemId === pid && r.quantity === D.PULL_QUANTITY) return r.measured === app.state.Fmeas;
+    }
+    return false;
+  }
+
   /* ------------------------------------------------------------ help */
   const HELP = {
     html: '<p>Describe a DC motor by two numbers from its datasheet, the <strong>stall torque</strong> and the <strong>no-load speed</strong>. Add gearing and a load, and the tool shows where the motor actually runs. It can also solve for the gear ratio that hits a target output speed under that load.</p>' +
@@ -2090,6 +2131,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
       '<p><strong>Why 150 rpm does not matter here.</strong> The program asks each motor for 150 rpm. A tethered vehicle cannot move, so the motor\'s controller pushes as hard as it can, up to its 2.5 A current limit, and the motor gives its full stall torque. The speed setting changes how fast the vehicle drives, not how hard it can pull when held still.</p>' +
       '<p><strong>Measuring μ.</strong> Set both motors to brake in hold mode so the wheels cannot turn. Weigh the vehicle. Pull it straight back, level, with the force sensor at axle height, until it slides, and record the peak force. If every wheel is locked, μ = F<sub>slide</sub> / (m g). If only the driven wheels are locked and the others roll, μ = F<sub>slide</sub> / (f m g). Omni wheels grip through their rollers, so measure each wheel type you consider.</p>' +
       '<p><strong>Things that lower a measured pull.</strong> A torque limit set in the program (Motor.setTorqueLimit) caps the torque. A hot motor is cut back to 50%, then 25%, 12.5% and 0% of its current, so let motors cool between trials and record the peak in the first few seconds. Battery charge does not matter: the V5 motor holds its power within 1%.</p>' +
+      '<p><strong>Saving your measurement.</strong> With Predict first on, check a pull prediction, then test the vehicle and type the sensor\'s peak force into Measured pull. It is saved in the prediction log with that prediction, as long as the design has not changed. You can also enter it before you check. The log\'s Measured column and its export show the reading and its percent difference from the model.</p>' +
       '<p><strong>Working with other tools.</strong> <strong>Load</strong> opens a drive-request file from the Gear Train Workbench or the Conveyor Designer. <strong>Export drive result</strong> saves the chosen ratio, operating point and duty range for them to read.</p>',
     units: 'Stall torque can be entered in N·m, N·cm, oz·in or kg·cm, the units on many hobby motor datasheets (1 ozf = 0.27801385 N, 1 kgf = 9.80665 N). Switching the unit converts the value. The plot always uses N·m. Speeds are in rpm, and rpm × 2π/60 gives rad/s.',
     keys: [['Tab to the plot', 'Then use the keys below'], ['← / →', 'Change the load torque by 1% of stall (Shift: 10%)']],
@@ -2215,7 +2257,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = DriveTool;
       optField(app, pb, Object.assign({ id: 'mdMass', label: 'Vehicle mass m', get: a => a.state.mass, set: (a, v) => { a.state.mass = v; } }, F.mass));
       app.numField(pb, Object.assign({ id: 'mdFD', label: 'Weight on driven wheels f', step: 5, get: a => a.state.fDrive, set: (a, v) => { a.state.fDrive = v; } }, F.fDrive));
       optField(app, pb, Object.assign({ id: 'mdMu', label: 'Friction coefficient μ', get: a => a.state.mu, set: (a, v) => { a.state.mu = v; } }, F.mu));
-      optField(app, pb, Object.assign({ id: 'mdFm', label: 'Measured pull', get: a => a.state.Fmeas, set: (a, v) => { a.state.Fmeas = v; } }, F.Fmeas));
+      // A measurement is not a model input: it keeps a checked prediction showing and is
+      // attached to the student's latest pull prediction for this design in the log.
+      optField(app, pb, Object.assign({ id: 'mdFm', label: 'Measured pull', keepPrediction: true, get: a => a.state.Fmeas, set: (a, v) => { a.state.Fmeas = v; a.recordMeasured(D.PULL_QUANTITY, v); } }, F.Fmeas));
       pb.insertAdjacentHTML('beforeend', '<p class="note">Measure the mass on a scale and μ with the force sensor (see Help). The gearing above is your extra reduction, after the motor\'s cartridge.</p>');
       // Extension
       const ex = sec('<div class="sec-h">Extension: electrical</div>');

@@ -164,6 +164,7 @@ const DriveTool = (function () {
     if (isNum(s.Fmeas)) out.measPct = out.F > 0 ? (s.Fmeas - out.F) / out.F * 100 : null;
     return out;
   }
+  const PULL_QUANTITY = 'maximum static pull F';
   const LIMIT_TEXT = { motor: 'Motors stall first', traction: 'Wheels slip first', both: 'Both, balanced', 'motor-only': 'Motors (traction not entered)' };
 
   const BAND_TEXT = { continuous: 'Continuous', short: 'Short periods only', avoid: 'Avoid', stalled: 'Stalled' };
@@ -176,7 +177,7 @@ const DriveTool = (function () {
       { key: 'Nout', quantity: 'output speed N_out', label: 'Output speed N<sub>out</sub>', unit: 'rpm', model: sol.Nout },
       { key: 'pct', quantity: 'motor torque % of stall', label: 'T<sub>m</sub> as % of stall', unit: '%', model: sol.op.pct },
       { key: 'ratio', quantity: 'recommended ratio i', label: 'Recommended ratio i', unit: '', model: sv && sv.feasible ? sv.iHigh : null, reason: !s.useTarget ? 'no target speed set' : 'this motor cannot reach that speed at that load' },
-    ].concat(sol.pull ? [{ key: 'pull', quantity: 'maximum static pull F', label: 'Maximum pull F', unit: 'N', model: sol.pull.F }] : []);
+    ].concat(sol.pull ? [{ key: 'pull', quantity: PULL_QUANTITY, label: 'Maximum pull F', unit: 'N', model: sol.pull.F, measured: isNum(s.Fmeas) ? s.Fmeas : null }] : []);
   }
 
   function snapshot(s) {
@@ -186,9 +187,9 @@ const DriveTool = (function () {
         stallTorque: TsNm(s), noLoadSpeed: rad(s.N0), motors: s.k,
         stages: s.stages.map(x => ({ ratio: x.ratio, efficiency: x.efficiency })),
         loadType: s.loadType, loadTorque: L.TL, radius: L.r, targetSpeed: s.useTarget ? rad(s.Ntarget) : null,
+        ...(s.pull ? { wheelRadius: wheelR(s), vehicleMass: s.mass, drivenFraction: s.fDrive / 100, mu: s.mu } : {}),
       },
-      ...(s.pull ? { pull: { wheelRadius: wheelR(s), vehicleMass: s.mass, drivenFraction: s.fDrive / 100, mu: s.mu } } : {}),
-      units: { stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' },
+      units: Object.assign({ stallTorque: 'N·m', noLoadSpeed: 'rad/s', loadTorque: 'N·m', radius: 'm', targetSpeed: 'rad/s' }, s.pull ? { wheelRadius: 'm', vehicleMass: 'kg' } : {}),
     };
   }
 
@@ -293,7 +294,7 @@ const DriveTool = (function () {
 
   return {
     TORQUE_UNITS, EXAMPLE_MOTOR, SOURCES, MAX_STAGES, MAX_COMPARE, FIELDS, BAND_TEXT, DEFAULT_MOTORS,
-    VEX_MOTORS, WHEELS, LIMIT_TEXT, isVex, wheelR, pullTest,
+    VEX_MOTORS, WHEELS, LIMIT_TEXT, PULL_QUANTITY, isVex, wheelR, pullTest,
     defaultState, tsCheck, TsNm, convertTs, load, setLoadTorque, roundRatio, solve, targets, snapshot,
     working, describe, applyDriveRequest, driveResult, readMotorList,
   };

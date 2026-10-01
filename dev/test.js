@@ -6,6 +6,7 @@
 const DriveTool = require('./core.js');
 const Schemas = require('./vendor/schemas.js');
 const Shell = require('./vendor/shell.js');
+const PredictionLog = require('./vendor/prediction-log.js');
 
 let passed = 0, failed = 0;
 function ok(name, cond, detail) {
@@ -114,11 +115,14 @@ console.log('VP-1 to VP-9: VEX static pull test (spec 02a)');
   ok('custom wheel radius', Math.abs(vex({ wheel: 'custom', rW: 100, stages: one(1, 1) }).pull.Fmotor - 21) < 1e-9);
   const s3 = vex(vp3);
   ok('pull is a predict-first target', DriveTool.targets(s3).some(t => t.key === 'pull' && Math.abs(t.model - p3.F) < 1e-9));
+  ok('the pull target carries the measured pull for the log', DriveTool.targets(vex(Object.assign({}, vp3, { Fmeas: 40 }))).find(t => t.key === 'pull').measured === 40 && DriveTool.targets(s3).find(t => t.key === 'pull').measured === null);
   ok('no pull target when the pull test is off', !DriveTool.targets(solve({})).some(t => t.key === 'pull'));
   const wt = DriveTool.working(s3, f, fu).map(x => x.title);
   ok('working covers both limits, the minimum, i* and m*', ['Pull when the motors stall', 'Pull when the wheels slip', 'Predicted pull', 'Crossover ratio', 'Mass for the motors'].every(n => wt.some(t => t.startsWith(n))), wt.join(' | '));
   ok('older state without pull fields still solves', !solve({}).pull && DriveTool.defaultState().pull === false);
-  ok('snapshot includes the pull inputs in SI only when the pull test is on', !DriveTool.snapshot(st(vp3)).pull && Math.abs(DriveTool.snapshot(st(Object.assign({ pull: true }, vp3))).pull.wheelRadius - 0.034925) < 1e-9);
+  const snapOn = DriveTool.snapshot(st(Object.assign({ pull: true }, vp3))).values;
+  ok('snapshot includes the pull inputs in SI only when the pull test is on', !('wheelRadius' in DriveTool.snapshot(st(vp3)).values) && Math.abs(snapOn.wheelRadius - 0.034925) < 1e-9 && snapOn.vehicleMass === 5 && snapOn.mu === 0.9);
+  ok('a different mass is a different problem in the log, a measured pull is not', PredictionLog.sandboxProblemId(snapOn) !== PredictionLog.sandboxProblemId(DriveTool.snapshot(st(Object.assign({ pull: true }, vp3, { mass: 6 }))).values) && PredictionLog.sandboxProblemId(snapOn) === PredictionLog.sandboxProblemId(DriveTool.snapshot(st(Object.assign({ pull: true }, vp3, { Fmeas: 40 }))).values));
 }
 
 console.log('Interface helpers');

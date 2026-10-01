@@ -154,12 +154,13 @@ k = 2, T_s = 1.05 N·m (green) unless stated.
 - [ ] The limiting factor is shown in words, not color alone.
 - [ ] Predict first hides the pull force, limiting factor and current-design dot.
 - [ ] Save files include the pull test inputs; older files load with the pull test panel blank.
+- [ ] A measured pull is saved in the prediction log with the matching pull prediction, and editing it does not hide checked results.
 
 ## 8. Open questions for review
 
 1. ~~Green cartridge stall torque.~~ Resolved: 1.05 N·m, confirmed against the VEX chart (3.1).
 2. ~~"200 mm omni".~~ Resolved: 200 mm of travel per turn, 64 mm diameter. Radius 200 mm ÷ 2π = 31.8 mm.
-3. **Measured pull in the prediction log.** Version 1 of this addendum shows the measured value on screen and saves it in the design file only. Logging it would need a change to the shared `prediction-log` schema upstream; decide later.
+3. ~~Measured pull in the prediction log.~~ Resolved: the measured pull is saved in the `measured` field of the student's latest pull prediction for the same design (same problem ID), with `pctMeasVsModel`. A reading entered before Check is logged at Check; one entered later updates that record. A reading for a changed design is not attached to an older prediction. Uses `annotateLatest` (prediction-log.js 1.1.0) and `app.recordMeasured` (shell.js 1.1.0); the log format itself is unchanged.
 
 ## 9. Sources
 
