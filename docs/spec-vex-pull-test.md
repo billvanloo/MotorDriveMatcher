@@ -41,6 +41,7 @@ Students can:
   - red 36:1: T_s = 2.1 N·m, N₀ = 100 rpm
   - green 18:1: T_s = 1.05 N·m, N₀ = 200 rpm
   - blue 6:1: T_s = 0.35 N·m, N₀ = 600 rpm
+- The V5 is not a straight-line motor. VEX's performance chart (torque, current and power against percent of maximum rpm) shows torque roughly flat from stall up to about 60% of maximum rpm, then falling. A static pull happens at zero speed, inside the flat region, so the stall torque above is the value that matters. The straight-line plot in `spec.md` 3.1 understates the V5 between stall and about 60% speed; help text must say this when the V5 preset is in use.
 - The motor's own controller limits current to 2.5 A. In velocity mode, a tethered vehicle cannot reach 150 rpm, so the controller drives full current and the motor delivers its stall torque. **The speed setpoint does not enter the static pull calculation.** Help text must say this.
 - Two motors drive one vehicle: k = 2, treated as motors in parallel (`spec.md` 3.1).
 
@@ -146,7 +147,7 @@ k = 2, T_s = 1.05 N·m (green) unless stated.
 
 ## 8. Open questions for review
 
-1. **Green cartridge stall torque.** 1.05 N·m is derived by scaling VEX's published 2.1 N·m (red, 36:1) by the cartridge ratio. Confirm against the green curve on the VEX knowledge base, or have students measure it.
+1. **Green cartridge stall torque.** 1.05 N·m is derived by scaling VEX's published 2.1 N·m (red, 36:1) by the cartridge ratio. The VEX knowledge base article (Understanding V5 Smart Motor (11W) Performance) has the chart but could not be fetched from the build environment. Read the green stall torque off that chart to confirm, or have students measure it.
 2. **"200 mm omni".** Read here as VEX's 200 mm travel omni wheel (200 mm per turn). If it means 200 mm diameter, the radius is 100 mm.
 3. **Measured pull in the prediction log.** Should a measured value be logged as its own record type, or only shown on screen? This may need a change to the shared `prediction-log` schema upstream.
 
