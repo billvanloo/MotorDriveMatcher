@@ -1,4 +1,4 @@
-// ecosystem/shell/shell.js v1.2.0
+// ecosystem/shell/shell.js v1.2.1
 // Shared tool frame for the Engineered by the Numbers tools (spec 00 §2–8):
 // header, footer, help, themes, small-screen notice, predict-first, show the
 // working, field validation, save/load, PNG export, printable report, the
@@ -90,6 +90,12 @@ const Shell = (function () {
     const a = Math.abs(pct);
     return a <= tol.match ? 'match' : a <= tol.close ? 'close' : 'off';
   }
+  // Yes/no targets (kind: 'yesno') are logged as 1 for yes and 0 for no (QUESTIONS Q13).
+  const yesNo = v => v === 1 ? 'yes' : v === 0 ? 'no' : 'not defined';
+  function yesNoMessage(pred, model, reason) {
+    if (model !== 0 && model !== 1) return 'You predicted ' + yesNo(pred) + '. The model answer is not defined' + (reason ? ': ' + reason : '') + '.';
+    return 'You predicted ' + yesNo(pred) + '. The model says ' + yesNo(model) + '.';
+  }
   function predictionMessage(pred, model, unit, sig, reason) {
     const u = unit ? ' ' + unit : '';
     if (!isNum(model)) return 'You predicted ' + fmtSig(pred, sig) + u + '. The model value is not defined' + (reason ? ': ' + reason : '') + '.';
@@ -146,7 +152,7 @@ const Shell = (function () {
     return { value: { challenges }, warnings };
   }
 
-  const util = { fmtSig, fmtInput, fmtPct, parseNumber, validateNumber, exportName, safePart, localDateISO, verdictFor, predictionMessage, esc, readChallengeList };
+  const util = { fmtSig, fmtInput, fmtPct, parseNumber, validateNumber, exportName, safePart, localDateISO, verdictFor, predictionMessage, yesNoMessage, esc, readChallengeList };
 
   /* =================================================================
      BROWSER FRAME
@@ -390,7 +396,7 @@ const Shell = (function () {
     const CH = cfg.challenges || null;
     const builtInChallenges = () => {
       if (!CH || !CH.builtIn) return [];
-      try { return readChallengeList(CH.builtIn, cfg.tool).value.challenges; } catch (e) { console.warn('Built-in challenges: ' + e.message); return []; }
+      try { return readChallengeList(CH.builtIn, cfg.tool).value.challenges; } catch (e) { console.error('Built-in challenges are not valid: ' + e.message); return []; }
     };
     app.challengeList = () => {
       const t = CH ? S.get('challenges', null) : null;
@@ -583,8 +589,11 @@ const Shell = (function () {
         if (multi) html += '<div class="pfgroup" data-group="' + esc(g) + '"><h4>' + (ts[0] && ts[0].groupLabel ? ts[0].groupLabel : esc(g)) + '</h4>';
         if (!st.revealed) {
           ts.forEach(t => {
-            const id = 'shPf_' + t.key;
-            html += '<div class="pfrow"><label for="' + id + '">' + t.label + '</label><input type="text" inputmode="decimal" id="' + id + '" data-key="' + esc(t.key) + '" data-group="' + esc(g) + '" value="' + esc(app.pf.fields[t.key] || '') + '" autocomplete="off"><span class="unit">' + esc(t.unit || '') + '</span></div>';
+            const id = 'shPf_' + t.key, cur = app.pf.fields[t.key] || '';
+            const ctl = t.kind === 'yesno'
+              ? '<select id="' + id + '" data-key="' + esc(t.key) + '" data-group="' + esc(g) + '"><option value=""' + (cur === '' ? ' selected' : '') + '>—</option><option value="1"' + (cur === '1' ? ' selected' : '') + '>Yes</option><option value="0"' + (cur === '0' ? ' selected' : '') + '>No</option></select><span class="unit"></span>'
+              : '<input type="text" inputmode="decimal" id="' + id + '" data-key="' + esc(t.key) + '" data-group="' + esc(g) + '" value="' + esc(cur) + '" autocomplete="off"><span class="unit">' + esc(t.unit || '') + '</span>';
+            html += '<div class="pfrow"><label for="' + id + '">' + t.label + '</label>' + ctl + '</div>';
           });
           html += '<div class="btnrow"><button class="btn primary" id="shCheck' + sfx + '" data-check="' + esc(g) + '" type="button"' + (blocked ? ' disabled' : '') + '>Check</button></div>';
         } else {
@@ -595,17 +604,17 @@ const Shell = (function () {
       });
       if (blocked && gs.some(g => !grp(g).revealed)) html += '<p class="note warn">Fix the highlighted input before checking.</p>';
       box.innerHTML = html;
-      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('input', () => { app.pf.fields[inp.dataset.key] = inp.value; }));
+      box.querySelectorAll('[data-key]').forEach(inp => inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', () => { app.pf.fields[inp.dataset.key] = inp.value; }));
       // preventDefault: Check moves focus to "Predict again", and without it the same Enter
       // press would go on to activate that button and undo the Check at once.
-      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); check(inp.dataset.group); } }));
+      box.querySelectorAll('[data-key]').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); check(inp.dataset.group); } }));
       box.querySelectorAll('[data-check]').forEach(b => b.addEventListener('click', () => check(b.dataset.check)));
       box.querySelectorAll('[data-again]').forEach(b => b.addEventListener('click', () => {
         const g = b.dataset.again, st = grp(g);
         st.revealed = false; st.messages = []; app.pf.revealed = false;
         cfg.predictTargets(app).filter(t => (t.group || '') === g).forEach(t => { delete app.pf.fields[t.key]; });
         render();
-        const f = box.querySelector('input[data-group="' + (window.CSS && CSS.escape ? CSS.escape(g) : g) + '"]'); if (f) f.focus();
+        const f = box.querySelector('[data-key][data-group="' + (window.CSS && CSS.escape ? CSS.escape(g) : g) + '"]'); if (f) f.focus();
       }));
     }
     function check(g) {
@@ -621,16 +630,18 @@ const Shell = (function () {
         if (raw === undefined || String(raw).trim() === '') continue;
         const p = parseNumber(raw);
         if (!isNum(p)) { app.toast(t.label.replace(/<[^>]+>/g, '') + ': enter a number.'); document.getElementById('shPf_' + t.key).focus(); return; }
+        const yn = t.kind === 'yesno';
+        if (yn && p !== 0 && p !== 1) { app.toast(t.label.replace(/<[^>]+>/g, '') + ': choose yes or no.'); return; }
         const model = isNum(t.model) ? t.model : null;
         const rec = PL.makeRecord({
           tool: cfg.tool, toolVersion: cfg.version, student, team: app.settings.team, classPeriod: app.settings.classPeriod,
-          problemId: pid, quantity: t.quantity || t.key, unit: t.unit || '', predicted: p, model, measured: t.measured,
+          problemId: pid, quantity: t.quantity || t.key, unit: yn ? 'yes/no' : t.unit || '', predicted: p, model, measured: t.measured,
           attempt: PL.nextAttempt(app.log, student, pid, t.quantity || t.key), inputs: snap,
         });
         recs.push(rec);
-        const v = verdictFor(rec.pctPredVsModel, tolerance());
+        const v = yn ? (model === p ? 'match' : 'off') : verdictFor(rec.pctPredVsModel, tolerance());
         const tag = v === 'match' ? ' <span class="pftag match">Match</span>' : v === 'close' ? ' <span class="pftag close">Close</span>' : '';
-        msgs.push({ verdict: v === 'match' ? 'match' : v === 'close' ? 'close' : '', html: '<b>' + t.label + '</b>' + tag + '<br>' + esc(predictionMessage(p, model, t.unit, app.settings.sig, t.reason)) });
+        msgs.push({ verdict: v === 'match' ? 'match' : v === 'close' ? 'close' : '', html: '<b>' + t.label + '</b>' + tag + '<br>' + esc(yn ? yesNoMessage(p, model, t.reason) : predictionMessage(p, model, t.unit, app.settings.sig, t.reason)) });
       }
       if (!recs.length) msgs.push({ html: 'No prediction was entered, so nothing was logged. The results are shown below.' });
       app.log = app.log.concat(recs); saveLog();
@@ -955,7 +966,7 @@ const Shell = (function () {
         '<h3>Sources</h3><ol>' + (hp.sources || []).map(s => '<li>' + esc(s.title) + (s.url ? ': <a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.url) + '</a>' : '') + '</li>').join('') + '</ol>' +
         '<div class="teacher"><h3 style="margin-top:0">Teacher notes</h3>' + (hp.teacher || '') +
         (cfg.predictFirst === false ? '' : '<p>The prediction log exports as JSON or CSV in the shared Engineered by the Numbers format, so a class set can be merged in the Prediction Log Collector. Nothing is sent anywhere; all data stays in the student\'s browser.</p>') +
-        (CH ? '<p>A challenge list is JSON: <code>{ "tool": "' + esc(cfg.tool) + '", "schemaVersion": 1, "challenges": [ { "id": "XX-1", "title": "…", "brief": "…", "inputs": { … }, "hidden": [ … ], "tolerance": { "match": 1, "close": 5 }, "requirePrediction": true } ] }</code>. Input values are in SI units, using the names shown in a saved design file. Paste it in Settings.</p>' : '') + '</div>' +
+        (CH ? '<p>A challenge list is JSON: <code>{ "tool": "' + esc(cfg.tool) + '", "schemaVersion": 1, "challenges": [ { "id": "XX-1", "title": "…", "brief": "…", "inputs": { … }, "hidden": [ … ], "tolerance": { "match": 1, "close": 5 }, "requirePrediction": true } ] }</code>. Input names and units are the ones in this tool\'s saved design file. Paste it in Settings.</p>' : '') + '</div>' +
         '<p class="note">' + esc(cfg.tool) + ' version ' + esc(cfg.version) + '.</p>';
     }
     app.openHelp = () => { renderHelp(); helpD.dlg.showModal(); };
@@ -975,6 +986,6 @@ const Shell = (function () {
     return app;
   }
 
-  return { create, util, version: '1.2.0' };
+  return { create, util, version: '1.2.1' };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Shell;
