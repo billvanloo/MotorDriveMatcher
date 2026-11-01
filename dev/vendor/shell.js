@@ -1,4 +1,4 @@
-// ecosystem/shell/shell.js v1.1.0
+// ecosystem/shell/shell.js v1.2.0
 // Shared tool frame for the Engineered by the Numbers tools (spec 00 §2–8):
 // header, footer, help, themes, small-screen notice, predict-first, show the
 // working, field validation, save/load, PNG export, printable report, the
@@ -99,7 +99,54 @@ const Shell = (function () {
   }
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const util = { fmtSig, fmtInput, fmtPct, parseNumber, validateNumber, exportName, safePart, localDateISO, verdictFor, predictionMessage, esc };
+  // Teacher challenge lists (00 §4.5–4.6). Accepts a JSON string, an object
+  // { tool, schemaVersion, challenges: [...] } or a bare array of challenges.
+  // Each challenge: { id, title, brief, inputs: {key: SI value}, hidden: [key],
+  // tolerance: { match, close } (percent), requirePrediction, predictFirst }.
+  // Returns { value: { challenges }, warnings }, or throws with a message for the teacher.
+  const CHALLENGE_VERSION = 1;
+  function readChallengeList(input, tool) {
+    let obj = input;
+    if (typeof input === 'string') {
+      try { obj = JSON.parse(input); } catch (e) { throw new Error('The challenge list is not valid JSON. Check for a missing comma, quote or bracket.'); }
+    }
+    if (Array.isArray(obj)) obj = { challenges: obj };
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.challenges)) throw new Error('A challenge list needs a "challenges" list.');
+    if (obj.tool && tool && obj.tool !== tool) throw new Error('This challenge list is for the ' + obj.tool + ', not the ' + tool + '.');
+    const warnings = [];
+    if (isNum(obj.schemaVersion) && obj.schemaVersion > CHALLENGE_VERSION) warnings.push('This list was made for a newer tool version; some fields may be ignored.');
+    const seen = new Set();
+    const challenges = obj.challenges.map((c, i) => {
+      const where = 'Challenge ' + (i + 1);
+      if (!c || typeof c !== 'object') throw new Error(where + ' is not an object.');
+      const id = typeof c.id === 'string' ? c.id.trim() : '';
+      if (!id) throw new Error(where + ' needs an "id", for example "FS-1".');
+      if (seen.has(id)) throw new Error('Two challenges have the id "' + id + '". Each id must be different.');
+      seen.add(id);
+      const inputs = c.inputs === undefined ? {} : c.inputs;
+      if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw new Error(id + ': "inputs" must be an object of input names and values.');
+      for (const k in inputs) if (!isNum(inputs[k]) && typeof inputs[k] !== 'string' && typeof inputs[k] !== 'boolean') throw new Error(id + ': input "' + k + '" must be a number, text or true/false.');
+      const hidden = c.hidden === undefined ? [] : c.hidden;
+      if (!Array.isArray(hidden) || hidden.some(k => typeof k !== 'string')) throw new Error(id + ': "hidden" must be a list of input names.');
+      let tolerance = null;
+      if (c.tolerance !== undefined) {
+        const t = c.tolerance;
+        if (!t || !isNum(t.match) || !isNum(t.close) || t.match <= 0 || t.close < t.match) throw new Error(id + ': "tolerance" needs "match" and "close" percentages, with 0 < match ≤ close.');
+        tolerance = { match: t.match, close: t.close };
+      }
+      return {
+        id, title: typeof c.title === 'string' && c.title.trim() ? c.title.trim() : id,
+        brief: typeof c.brief === 'string' ? c.brief : '',
+        inputs, hidden, tolerance,
+        requirePrediction: c.requirePrediction === true,
+        predictFirst: c.predictFirst !== false,
+        example: c.example === true,
+      };
+    });
+    return { value: { challenges }, warnings };
+  }
+
+  const util = { fmtSig, fmtInput, fmtPct, parseNumber, validateNumber, exportName, safePart, localDateISO, verdictFor, predictionMessage, esc, readChallengeList };
 
   /* =================================================================
      BROWSER FRAME
@@ -143,7 +190,7 @@ const Shell = (function () {
       cfg, util, PL, SC,
       state: null, el: {},
       settings: Object.assign({ sig: 3, team: '', classPeriod: '', predictFirst: false }, cfg.defaultSettings || {}, S.get('settings', {})),
-      pf: { revealed: false, fields: {}, messages: [] },
+      pf: { revealed: false, groups: {}, fields: {}, messages: [] },
       invalid: {}, fields: [], log: S.get('log', []),
       sessionStart: Date.now(), working: [],
     };
@@ -161,8 +208,10 @@ const Shell = (function () {
     document.body.innerHTML = '';
     const header = h('header', { class: 'sh-header' },
       '<div class="titleblock"><span class="t1">' + esc(cfg.tool) + '</span><span class="t2">' + esc(cfg.subtitle || '') + '</span></div>' +
-      '<div id="shModes"></div><div class="spacer"></div>' +
-      '<div class="namewrap"><label for="shName">Name</label><input id="shName" maxlength="40" placeholder="Your name" autocomplete="name"></div>' +
+      '<div id="shModes"></div><div id="shTabs"></div>' +
+      '<div class="chwrap" id="shChWrap" hidden><label for="shChallenge">Challenge</label><select id="shChallenge"></select></div>' +
+      '<div class="spacer"></div>' +
+      '<div class="namewrap" id="shNameWrap"><label for="shName">Name</label><input id="shName" maxlength="40" placeholder="Your name" autocomplete="name"></div>' +
       '<div class="hbtns">' +
       '<button id="shPredict" aria-pressed="false" title="Hide results until you enter and check a prediction">Predict first</button>' +
       '<button id="shPng" title="Download a PNG of the drawing">Export image</button>' +
@@ -173,10 +222,11 @@ const Shell = (function () {
       '<button id="shSettings" aria-label="Settings" title="Settings">⚙</button>' +
       '<button id="shTheme" aria-pressed="false" title="Switch light or dark theme">theme</button>' +
       '<button id="shHelp" aria-label="Help" title="How to use this tool (?)">?</button>' +
-      '</div><input type="file" id="shFile" accept=".json,.csv,application/json,text/csv" hidden>');
+      '</div><input type="file" id="shFile" accept=".json,.csv,application/json,text/csv" hidden' + (cfg.onFiles ? ' multiple' : '') + '>');
+    const brief = h('div', { id: 'shBrief', class: 'sh-brief', role: 'note', hidden: true });
     const small = h('div', { id: 'shSmall', class: 'sh-small', role: 'note' },
       '<span>This tool needs a larger screen, at least 1024 px wide, for full use. The readouts still work here.</span><button type="button">Dismiss</button>');
-    const main = h('main', { class: 'sh-main' },
+    const main = h('main', { class: 'sh-main', id: 'shMain' },
       '<section id="shInputs" class="sh-col sh-inputs" aria-label="Inputs"></section>' +
       '<section id="shStage" class="sh-col sh-stage" aria-label="Drawing"></section>' +
       '<section id="shResults" class="sh-col sh-results" aria-label="Results">' +
@@ -197,7 +247,7 @@ const Shell = (function () {
     const desc = h('div', { id: 'shDesc', class: 'sr-only', 'aria-live': 'polite' });
     const toastEl = h('div', { id: 'shToast', class: 'sh-toast', role: 'status', 'aria-live': 'polite' });
     const report = h('div', { id: 'sh-report' });
-    [header, small, main, footer, live, desc, toastEl, report].forEach(e => document.body.appendChild(e));
+    [header, small, brief, main, footer, live, desc, toastEl, report].forEach(e => document.body.appendChild(e));
     const $ = id => document.getElementById(id);
     app.el = { inputs: $('shInputs'), stage: $('shStage'), results: $('shResultsBody'), pf: $('shPfBox'), working: $('shWorkingBody'), workingBox: $('shWorking') };
 
@@ -265,6 +315,9 @@ const Shell = (function () {
     nameEl.value = G.get('name', '') || '';
     nameEl.addEventListener('input', () => G.set('name', nameEl.value));
     app.student = () => nameEl.value.trim();
+    // A teacher tool (the Collector) has no student name and no predict first.
+    if (cfg.nameField === false) $('shNameWrap').hidden = true;
+    if (cfg.predictFirst === false) { $('shPredict').hidden = true; $('shLog').hidden = true; app.settings.predictFirst = false; }
 
     /* ---------------- small screen ---------------- */
     if (G.get('smallDismissed', false)) small.hidden = true;
@@ -286,11 +339,113 @@ const Shell = (function () {
       document.querySelectorAll('#shModes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === cur ? 'true' : 'false'));
     }
 
+    /* ---------------- tabs ---------------- */
+    // cfg.tabs: { label, options: [{ id, label }], get(app), set(app, id) }. Switching a
+    // tab is not an input change, so predictions stay. The tab lives in the tool's state.
+    if (cfg.tabs) {
+      const box = $('shTabs');
+      box.className = 'tabs'; box.setAttribute('role', 'tablist'); box.setAttribute('aria-label', cfg.tabs.label || 'Views');
+      cfg.tabs.options.forEach(o => {
+        const b = h('button', { type: 'button', role: 'tab', id: 'shTab_' + o.id, 'data-tab': o.id, 'aria-selected': 'false', 'aria-controls': 'shMain', tabindex: '-1' }, esc(o.label));
+        b.addEventListener('click', () => app.selectTab(o.id));
+        box.appendChild(b);
+      });
+      box.addEventListener('keydown', e => {
+        const ids = cfg.tabs.options.map(o => o.id);
+        let i = ids.indexOf(cfg.tabs.get(app));
+        if (e.key === 'ArrowRight') i = (i + 1) % ids.length;
+        else if (e.key === 'ArrowLeft') i = (i - 1 + ids.length) % ids.length;
+        else if (e.key === 'Home') i = 0;
+        else if (e.key === 'End') i = ids.length - 1;
+        else return;
+        e.preventDefault();
+        app.selectTab(ids[i]);
+        $('shTab_' + ids[i]).focus();
+      });
+    }
+    app.tab = () => cfg.tabs ? cfg.tabs.get(app) : null;
+    app.selectTab = id => {
+      if (!cfg.tabs || app.tab() === id) return;
+      const o = cfg.tabs.options.find(x => x.id === id);
+      if (!o) return;
+      cfg.tabs.set(app, id);
+      saveState(); render();
+      app.announce(o.label + ' tab.');
+    };
+    function syncTabs() {
+      if (!cfg.tabs) return;
+      const cur = app.tab();
+      document.querySelectorAll('#shTabs [role="tab"]').forEach(b => {
+        const on = b.dataset.tab === cur;
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.setAttribute('tabindex', on ? '0' : '-1');
+      });
+      document.body.setAttribute('data-tab', cur || '');
+    }
+
+    /* ---------------- challenges (00 §4.5–4.6) ---------------- */
+    // cfg.challenges: { builtIn: [...] (examples), active(app) -> challenge mode on?,
+    // apply(app, challenge) (default: copy challenge.inputs into app.state) }.
+    // A teacher's list, pasted in Settings, replaces the built-in examples.
+    const CH = cfg.challenges || null;
+    const builtInChallenges = () => {
+      if (!CH || !CH.builtIn) return [];
+      try { return readChallengeList(CH.builtIn, cfg.tool).value.challenges; } catch (e) { console.warn('Built-in challenges: ' + e.message); return []; }
+    };
+    app.challengeList = () => {
+      const t = CH ? S.get('challenges', null) : null;
+      if (t) { try { return readChallengeList(t, cfg.tool).value.challenges; } catch (e) { /* fall back to the examples */ } }
+      return builtInChallenges();
+    };
+    app.isChallengeMode = () => !!CH && (CH.active ? !!CH.active(app) : !!(cfg.modes && cfg.modes.get(app) === 'challenge'));
+    app.challenge = () => {
+      if (!app.isChallengeMode() || !app.settings.challengeId) return null;
+      return app.challengeList().find(c => c.id === app.settings.challengeId) || null;
+    };
+    app.isHidden = key => { const c = app.challenge(); return !!(c && c.hidden.indexOf(key) >= 0); };
+    app.startChallenge = id => {
+      const c = app.challengeList().find(x => x.id === id) || null;
+      app.settings.challengeId = c ? c.id : null;
+      if (c) {
+        if (c.predictFirst || c.requirePrediction) app.settings.predictFirst = true;
+        if (CH.apply) CH.apply(app, c);
+        else for (const k in c.inputs) if (Object.prototype.hasOwnProperty.call(app.state, k)) app.state[k] = c.inputs[k];
+      }
+      saveSettings(); app.invalid = {};
+      clearPrediction(); app.refreshFields(); saveState(); render();
+      app.announce(c ? 'Challenge ' + c.id + ': ' + c.title + '.' : 'No challenge chosen.');
+    };
+    // 00 §4.6: a challenge can require a checked prediction before Run (or Spin up, Turn ...).
+    app.gate = () => {
+      const c = app.challenge();
+      if (!c || !c.requirePrediction || (pfOn() && app.pf.revealed)) return true;
+      app.toast('Check your prediction first.'); app.announce('Check your prediction first.');
+      return false;
+    };
+    if (CH) $('shChallenge').addEventListener('change', e => app.startChallenge(e.target.value));
+    function syncChallenge() {
+      if (!CH) return;
+      const on = app.isChallengeMode(), list = app.challengeList(), c = app.challenge();
+      $('shChWrap').hidden = !on;
+      const sel = $('shChallenge');
+      const html = '<option value="">Choose a challenge</option>' + list.map(x => '<option value="' + esc(x.id) + '">' + esc(x.id + ' · ' + x.title) + (x.example ? ' (example)' : '') + '</option>').join('');
+      if (sel.innerHTML !== html) sel.innerHTML = html;
+      sel.value = c ? c.id : '';
+      brief.hidden = !(on && c);
+      if (on && c) {
+        const bh = '<strong>' + esc(c.id + ' · ' + c.title) + '</strong>' + (c.brief ? ' ' + esc(c.brief) : '') +
+          (c.hidden.length ? ' <span class="note">Some values are hidden for this challenge.</span>' : '') +
+          (c.requirePrediction ? ' <span class="note">Check a prediction before you run it.</span>' : '');
+        if (brief.innerHTML !== bh) brief.innerHTML = bh;
+      }
+    }
+
     /* =================================================================
        FIELDS
        ================================================================= */
     // Numeric input row. o: { id, label, unit, name, get(app), set(app, v), min, max, gt, integer,
-    // check(v, app), step, help, parent }
+    // check(v, app), step, help, parent, key }. `key` names the value for challenges: a
+    // challenge that hides that key shows "hidden" in a locked box.
     app.numField = (parent, o) => {
       const row = h('div', { class: 'fld' });
       const errId = o.id + 'Err';
@@ -321,16 +476,24 @@ const Shell = (function () {
           commit();
         }
       });
+      const hid = () => !!(o.key && app.isHidden(o.key));
+      // Returns true when the box is showing "hidden" and must not be refreshed.
+      const lockHidden = () => {
+        if (hid()) { input.disabled = true; input.value = 'hidden'; err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; return true; }
+        if (input.disabled && input.value === 'hidden') { input.disabled = false; input.value = fmtInput(o.get(app)); }
+        return false;
+      };
       const field = {
         o, input, err, row,
         sync() {
+          if (lockHidden()) return;
           if (document.activeElement === input || app.invalid[o.id]) return;
           const v = o.get(app); const s = fmtInput(v);
           if (input.value !== s && parseNumber(input.value) !== v) input.value = s;
           else if (input.value === '' && s !== '') input.value = s;
         },
-        revalidate() { if (input.value !== '') { const r = validateNumber(input.value, spec()); if (r.error && !app.invalid[o.id]) { err.textContent = r.error; input.setAttribute('aria-invalid', 'true'); app.invalid[o.id] = r.error; } else if (!r.error && app.invalid[o.id]) { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; o.set(app, r.value); } } },
-        reset() { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; input.value = fmtInput(o.get(app)); },
+        revalidate() { if (!hid() && input.value !== '') { const r = validateNumber(input.value, spec()); if (r.error && !app.invalid[o.id]) { err.textContent = r.error; input.setAttribute('aria-invalid', 'true'); app.invalid[o.id] = r.error; } else if (!r.error && app.invalid[o.id]) { err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; o.set(app, r.value); } } },
+        reset() { if (lockHidden()) return; err.textContent = ''; input.removeAttribute('aria-invalid'); delete app.invalid[o.id]; input.value = fmtInput(o.get(app)); },
       };
       input.value = fmtInput(o.get(app));
       app.fields.push(field);
@@ -373,45 +536,83 @@ const Shell = (function () {
        PREDICT FIRST (00 §4)
        ================================================================= */
     const pfOn = () => !!app.settings.predictFirst;
-    app.masked = () => pfOn() && !app.pf.revealed;
+    // Predict targets can carry a `group` (and `groupLabel`). Each group has its own
+    // Check, so a team can predict one design step before seeing the next. A tool with
+    // no groups behaves as one group named ''.
+    const groupsOf = targets => {
+      const gs = [];
+      targets.forEach(t => { const g = t.group || ''; if (gs.indexOf(g) < 0) gs.push(g); });
+      return gs.length ? gs : [''];
+    };
+    const grp = g => { g = g || ''; return app.pf.groups[g] || (app.pf.groups[g] = { revealed: false, messages: [] }); };
+    // masked(): true while any group is still hidden. masked(group): that group only.
+    app.masked = g => {
+      if (!pfOn()) return false;
+      if (g !== undefined) return !grp(g).revealed;
+      return !app.pf.revealed;
+    };
     // Wrap a readout value: shows a blank box while hidden.
-    app.show = (text) => app.masked() ? '<span class="masked" aria-label="hidden until you check your prediction">?</span>' : text;
-    function clearPrediction() { app.pf.revealed = false; app.pf.fields = {}; app.pf.messages = []; }
+    app.show = (text, g) => app.masked(g) ? '<span class="masked" aria-label="hidden until you check your prediction">?</span>' : text;
+    function clearPrediction() { app.pf.revealed = false; app.pf.groups = {}; app.pf.fields = {}; app.pf.messages = []; }
     $('shPredict').addEventListener('click', () => {
+      const c = app.challenge();
+      if (c && c.requirePrediction && pfOn()) { app.toast('This challenge needs predict first.'); return; }
       app.settings.predictFirst = !pfOn(); saveSettings(); clearPrediction(); render();
       app.announce(pfOn() ? 'Predict first is on. Results are hidden until you check a prediction.' : 'Predict first is off.');
     });
-    function problemId() { return cfg.problemId ? cfg.problemId(app) : PL.sandboxProblemId(snapshot().values); }
+    function problemId() {
+      if (cfg.problemId) return cfg.problemId(app);
+      const c = app.challenge();
+      return c ? c.id : PL.sandboxProblemId(snapshot().values);
+    }
     function snapshot() { return cfg.inputsSnapshot ? cfg.inputsSnapshot(app) : { values: {}, units: {} }; }
+    const tolerance = () => { const c = app.challenge(); return (c && c.tolerance) || cfg.tolerance; };
+    const gid = g => g ? '_' + String(g).replace(/[^A-Za-z0-9_-]/g, '-') : '';
     function renderPf() {
       const box = app.el.pf;
       $('shPredict').setAttribute('aria-pressed', pfOn() ? 'true' : 'false');
       if (!pfOn()) { box.hidden = true; return; }
       box.hidden = false;
       const targets = cfg.predictTargets(app);
+      const gs = groupsOf(targets), multi = gs.length > 1;
       const blocked = app.hasInvalid();
       let html = '<h3>Predict first</h3>';
-      if (!app.pf.revealed) {
-        html += '<p class="note">Enter your predictions, then press Check. Results stay hidden until you do.</p>';
-        targets.forEach(t => {
-          const id = 'shPf_' + t.key;
-          html += '<div class="pfrow"><label for="' + id + '">' + t.label + '</label><input type="text" inputmode="decimal" id="' + id + '" data-key="' + esc(t.key) + '" value="' + esc(app.pf.fields[t.key] || '') + '" autocomplete="off"><span class="unit">' + esc(t.unit || '') + '</span></div>';
-        });
-        html += '<div class="btnrow"><button class="btn primary" id="shCheck" type="button"' + (blocked ? ' disabled' : '') + '>Check</button></div>';
-        if (blocked) html += '<p class="note warn">Fix the highlighted input before checking.</p>';
-      } else {
-        app.pf.messages.forEach(m => { html += '<div class="pfmsg ' + (m.verdict || '') + '">' + m.html + '</div>'; });
-        html += '<div class="btnrow"><button class="btn" id="shAgain" type="button">Predict again</button></div>';
-      }
+      if (gs.some(g => !grp(g).revealed)) html += '<p class="note">Enter your predictions, then press Check. Results stay hidden until you do.</p>';
+      gs.forEach(g => {
+        const ts = targets.filter(t => (t.group || '') === g), st = grp(g), sfx = gid(g);
+        if (multi) html += '<div class="pfgroup" data-group="' + esc(g) + '"><h4>' + (ts[0] && ts[0].groupLabel ? ts[0].groupLabel : esc(g)) + '</h4>';
+        if (!st.revealed) {
+          ts.forEach(t => {
+            const id = 'shPf_' + t.key;
+            html += '<div class="pfrow"><label for="' + id + '">' + t.label + '</label><input type="text" inputmode="decimal" id="' + id + '" data-key="' + esc(t.key) + '" data-group="' + esc(g) + '" value="' + esc(app.pf.fields[t.key] || '') + '" autocomplete="off"><span class="unit">' + esc(t.unit || '') + '</span></div>';
+          });
+          html += '<div class="btnrow"><button class="btn primary" id="shCheck' + sfx + '" data-check="' + esc(g) + '" type="button"' + (blocked ? ' disabled' : '') + '>Check</button></div>';
+        } else {
+          st.messages.forEach(m => { html += '<div class="pfmsg ' + (m.verdict || '') + '">' + m.html + '</div>'; });
+          html += '<div class="btnrow"><button class="btn" id="shAgain' + sfx + '" data-again="' + esc(g) + '" type="button">Predict again</button></div>';
+        }
+        if (multi) html += '</div>';
+      });
+      if (blocked && gs.some(g => !grp(g).revealed)) html += '<p class="note warn">Fix the highlighted input before checking.</p>';
       box.innerHTML = html;
       box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('input', () => { app.pf.fields[inp.dataset.key] = inp.value; }));
-      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') check(); }));
-      const c = $('shCheck'); if (c) c.addEventListener('click', check);
-      const a = $('shAgain'); if (a) a.addEventListener('click', () => { clearPrediction(); render(); const f = box.querySelector('input'); if (f) f.focus(); });
+      // preventDefault: Check moves focus to "Predict again", and without it the same Enter
+      // press would go on to activate that button and undo the Check at once.
+      box.querySelectorAll('input[data-key]').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); check(inp.dataset.group); } }));
+      box.querySelectorAll('[data-check]').forEach(b => b.addEventListener('click', () => check(b.dataset.check)));
+      box.querySelectorAll('[data-again]').forEach(b => b.addEventListener('click', () => {
+        const g = b.dataset.again, st = grp(g);
+        st.revealed = false; st.messages = []; app.pf.revealed = false;
+        cfg.predictTargets(app).filter(t => (t.group || '') === g).forEach(t => { delete app.pf.fields[t.key]; });
+        render();
+        const f = box.querySelector('input[data-group="' + (window.CSS && CSS.escape ? CSS.escape(g) : g) + '"]'); if (f) f.focus();
+      }));
     }
-    function check() {
+    function check(g) {
+      g = g || '';
       if (app.hasInvalid()) return;
-      const targets = cfg.predictTargets(app);
+      const all = cfg.predictTargets(app);
+      const targets = all.filter(t => (t.group || '') === g);
       const student = app.student() || 'unnamed';
       const pid = problemId(), snap = snapshot();
       const msgs = [], recs = [];
@@ -427,16 +628,19 @@ const Shell = (function () {
           attempt: PL.nextAttempt(app.log, student, pid, t.quantity || t.key), inputs: snap,
         });
         recs.push(rec);
-        const v = verdictFor(rec.pctPredVsModel, cfg.tolerance);
+        const v = verdictFor(rec.pctPredVsModel, tolerance());
         const tag = v === 'match' ? ' <span class="pftag match">Match</span>' : v === 'close' ? ' <span class="pftag close">Close</span>' : '';
         msgs.push({ verdict: v === 'match' ? 'match' : v === 'close' ? 'close' : '', html: '<b>' + t.label + '</b>' + tag + '<br>' + esc(predictionMessage(p, model, t.unit, app.settings.sig, t.reason)) });
       }
       if (!recs.length) msgs.push({ html: 'No prediction was entered, so nothing was logged. The results are shown below.' });
       app.log = app.log.concat(recs); saveLog();
-      app.pf.revealed = true; app.pf.messages = msgs;
+      const st = grp(g);
+      st.revealed = true; st.messages = msgs;
+      app.pf.messages = msgs;
+      app.pf.revealed = groupsOf(all).every(x => grp(x).revealed);
       render();
       app.announce(msgs.map(m => m.html.replace(/<[^>]+>/g, ' ')).join(' '));
-      const again = $('shAgain'); if (again) again.focus();
+      const again = $('shAgain' + gid(g)); if (again) again.focus();
     }
     app.check = check;
     // Attach a measured value to this student's latest prediction of a quantity for the
@@ -452,19 +656,32 @@ const Shell = (function () {
     /* =================================================================
        SHOW THE WORKING (00 §5)
        ================================================================= */
+    // steps: [{ title, formula, sub, result, note, source }], or groups of them:
+    // [{ heading, group, steps: [...] }]. A group with a predict `group` stays hidden
+    // until that group's prediction is checked.
     app.setWorking = steps => { app.working = steps || []; };
+    const workingGrouped = () => app.working.some(s => s && Array.isArray(s.steps));
+    const groupMasked = gr => gr.group !== undefined ? app.masked(gr.group) : app.masked();
+    const stepsHtml = steps => '<ol class="wk">' + steps.map(s =>
+      '<li><div class="wt">' + s.title + '</div>' +
+      (s.formula ? '<div class="wf">' + s.formula + '</div>' : '') +
+      (s.sub ? '<div class="ws">= ' + s.sub + '</div>' : '') +
+      (s.result ? '<div class="wr">= ' + s.result + '</div>' : '') +
+      (s.note ? '<div class="note">' + s.note + '</div>' : '') +
+      (s.source ? '<div class="wsrc">Source: ' + esc(s.source) + '</div>' : '') + '</li>').join('') + '</ol>';
     function renderWorking() {
       const body = app.el.working;
+      if (workingGrouped()) {
+        if (app.hasInvalid()) { body.innerHTML = '<p class="note" style="padding:8px 10px">' + esc(app.invalidReason()) + '.</p>'; return; }
+        body.innerHTML = app.working.map(gr => '<h4 class="wk-h">' + gr.heading + '</h4>' +
+          (groupMasked(gr) ? '<p class="note" style="padding:4px 10px 8px">Hidden until you check your prediction.</p>'
+            : gr.steps.length ? stepsHtml(gr.steps) : '<p class="note" style="padding:4px 10px 8px">Nothing to show yet.</p>')).join('');
+        return;
+      }
       if (app.masked()) { body.innerHTML = '<p class="note" style="padding:8px 10px">Hidden until you check your prediction.</p>'; return; }
       if (app.hasInvalid()) { body.innerHTML = '<p class="note" style="padding:8px 10px">' + esc(app.invalidReason()) + '.</p>'; return; }
       if (!app.working.length) { body.innerHTML = '<p class="note" style="padding:8px 10px">Nothing to show yet.</p>'; return; }
-      body.innerHTML = '<ol class="wk">' + app.working.map(s =>
-        '<li><div class="wt">' + s.title + '</div>' +
-        (s.formula ? '<div class="wf">' + s.formula + '</div>' : '') +
-        (s.sub ? '<div class="ws">= ' + s.sub + '</div>' : '') +
-        (s.result ? '<div class="wr">= ' + s.result + '</div>' : '') +
-        (s.note ? '<div class="note">' + s.note + '</div>' : '') +
-        (s.source ? '<div class="wsrc">Source: ' + esc(s.source) + '</div>' : '') + '</li>').join('') + '</ol>';
+      body.innerHTML = stepsHtml(app.working);
     }
 
     /* =================================================================
@@ -475,7 +692,7 @@ const Shell = (function () {
     function saveSettings() { S.set('settings', app.settings); }
     function saveLog() { S.set('log', app.log); }
     function render() {
-      syncModes();
+      syncModes(); syncTabs(); syncChallenge();
       app.fields.forEach(f => f.sync());
       cfg.render(app);
       renderPf();
@@ -492,7 +709,8 @@ const Shell = (function () {
     /* =================================================================
        SAVE / LOAD / IMPORT (00 §6)
        ================================================================= */
-    function context() { return cfg.context ? cfg.context(app) : 'sandbox'; }
+    function context() { if (cfg.context) return cfg.context(app); const c = app.challenge(); return c ? c.id : 'sandbox'; }
+    function contextLabel() { if (cfg.contextLabel) return cfg.contextLabel(app); const c = app.challenge(); return c ? 'Challenge ' + c.id : 'Sandbox'; }
     app.fileName = ext => exportName({ student: app.student(), tool: cfg.slug, context: context(), dateISO: localDateISO(), ext });
     $('shSave').addEventListener('click', () => {
       const f = SC.makeDesignFile({ tool: cfg.tool, toolVersion: cfg.version, schemaVersion: cfg.schemaVersion }, cfg.getState ? cfg.getState(app) : app.state);
@@ -502,9 +720,31 @@ const Shell = (function () {
     });
     $('shLoad').addEventListener('click', () => app.openFile());
     app.openFile = () => { $('shFile').value = ''; $('shFile').click(); };
-    $('shFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) readFile(f); });
+    $('shFile').addEventListener('change', e => { const fs = e.target.files; if (fs.length) { if (cfg.onFiles) readFiles(fs); else readFile(fs[0]); } });
     document.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
-    document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) { e.preventDefault(); readFile(e.dataTransfer.files[0]); } });
+    document.addEventListener('drop', e => {
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      if (cfg.onFiles) readFiles(e.dataTransfer.files); else readFile(e.dataTransfer.files[0]);
+    });
+    // cfg.onFiles(app, [{ name, text, error }]): a tool that takes many files at once
+    // (the Collector) gets every file except saved design files, which the shell
+    // restores as usual. A file that can't be read has text null and an error.
+    function readFiles(list) {
+      return Promise.all([...list].map(f => new Promise(res => {
+        const r = new FileReader();
+        r.onload = () => res({ name: f.name, text: String(r.result), error: null });
+        r.onerror = () => res({ name: f.name, text: null, error: 'the file could not be read' });
+        r.readAsText(f);
+      }))).then(files => {
+        const rest = files.filter(f => {
+          if (f.text !== null && !/\.csv$/i.test(f.name) && SC.kindOf(f.text) === 'design') { app.loadText(f.text, f.name); return false; }
+          return true;
+        });
+        if (rest.length) cfg.onFiles(app, rest);
+      });
+    }
+    app.readFiles = readFiles;
     function readFile(file) {
       const r = new FileReader();
       r.onload = () => app.loadText(String(r.result), file.name);
@@ -545,7 +785,7 @@ const Shell = (function () {
        ================================================================= */
     function drawingForExport() { return app.withLight(() => cfg.drawing(app, { export: true })); }
     function captionText() {
-      return 'Name: ' + (app.student() || 'unnamed') + '   ·   ' + cfg.tool + '   ·   ' + (cfg.contextLabel ? cfg.contextLabel(app) : 'Sandbox') + '   ·   ' + localDateISO();
+      return (cfg.nameField === false ? '' : 'Name: ' + (app.student() || 'unnamed') + '   ·   ') + cfg.tool + '   ·   ' + contextLabel() + '   ·   ' + localDateISO();
     }
     app.exportImage = () => new Promise((resolve, reject) => {
       const d = drawingForExport();
@@ -576,21 +816,26 @@ const Shell = (function () {
       const r = cfg.report(app);
       const rows = list => list.map(([k, v]) => '<tr><th style="width:45%">' + k + '</th><td class="mono">' + v + '</td></tr>').join('');
       const session = app.log.filter(x => Date.parse(x.timestamp) >= app.sessionStart - 1000);
-      const wk = app.masked() ? '<p>Hidden until the prediction is checked.</p>' : app.working.length ? '<table><tr class="hd"><th>#</th><th>Step</th><th>Formula</th><th>With numbers</th><th>Result</th><th>Source</th></tr>' +
-        app.working.map((s, i) => '<tr><td>' + (i + 1) + '</td><td>' + s.title + '</td><td class="mono">' + (s.formula || '') + '</td><td class="mono">' + (s.sub || '') + '</td><td class="mono">' + (s.result || '') + '</td><td>' + esc(s.source || '') + '</td></tr>').join('') + '</table>' : '<p>Nothing to show.</p>';
+      const wkHead = '<tr class="hd"><th>#</th><th>Step</th><th>Formula</th><th>With numbers</th><th>Result</th><th>Source</th></tr>';
+      const wkRows = steps => steps.map((s, i) => '<tr><td>' + (i + 1) + '</td><td>' + s.title + '</td><td class="mono">' + (s.formula || '') + '</td><td class="mono">' + (s.sub || '') + '</td><td class="mono">' + (s.result || '') + '</td><td>' + esc(s.source || '') + '</td></tr>').join('');
+      const wk = workingGrouped()
+        ? app.working.map(gr => '<h3 class="wk-h">' + gr.heading + '</h3>' + (groupMasked(gr) ? '<p>Hidden until the prediction is checked.</p>' : gr.steps.length ? '<table>' + wkHead + wkRows(gr.steps) + '</table>' : '<p>Nothing to show.</p>')).join('')
+        : app.masked() ? '<p>Hidden until the prediction is checked.</p>' : app.working.length ? '<table>' + wkHead + wkRows(app.working) + '</table>' : '<p>Nothing to show.</p>';
       const hist = session.length ? '<table><tr class="hd"><th>Time</th><th>Quantity</th><th>Predicted</th><th>Model</th><th>Difference</th><th>Attempt</th></tr>' +
         session.map(x => '<tr><td>' + esc(x.timestamp.slice(11, 19)) + '</td><td>' + esc(x.quantity) + '</td><td class="mono">' + fmtSig(x.predicted, app.settings.sig) + ' ' + esc(x.unit) + '</td><td class="mono">' + (x.model === null ? 'not defined' : fmtSig(x.model, app.settings.sig) + ' ' + esc(x.unit)) + '</td><td class="mono">' + fmtPct(x.pctPredVsModel, app.settings.sig) + '</td><td>' + x.attempt + '</td></tr>').join('') + '</table>' : '<p>No predictions checked this session.</p>';
       const sources = (cfg.help && cfg.help.sources || []).map(s => '<li>' + esc(s.title) + (s.url ? ': ' + esc(s.url) : '') + '</li>').join('');
+      const teacherTool = cfg.predictFirst === false;
       report.innerHTML = '<div class="rb"><h1>' + esc(cfg.tool) + ' — Report</h1><div class="sub">' + esc(cfg.subtitle || '') + '</div>' +
-        '<table><tr class="hd"><th>Name</th><th>Date</th><th>Mode</th><th>Tool version</th></tr><tr><td>' + esc(app.student() || 'unnamed') + '</td><td>' + localDateISO() + '</td><td>' + esc(cfg.contextLabel ? cfg.contextLabel(app) : 'Sandbox') + '</td><td>' + esc(cfg.version) + '</td></tr></table>' +
+        '<table><tr class="hd"><th>Name</th><th>Date</th><th>Mode</th><th>Tool version</th></tr><tr><td>' + esc(teacherTool && cfg.nameField === false ? '—' : app.student() || 'unnamed') + '</td><td>' + localDateISO() + '</td><td>' + esc(contextLabel()) + '</td><td>' + esc(cfg.version) + '</td></tr></table>' +
         '<div class="fig">' + d.svg + '</div>' +
         '<h2>Inputs</h2><table>' + rows(r.inputs) + '</table>' +
         '<h2>Results</h2><table>' + rows(r.outputs) + '</table>' +
         (r.notes && r.notes.length ? '<h2>Notes</h2><ul>' + r.notes.map(n => '<li>' + n + '</li>').join('') + '</ul>' : '') +
+        (r.sections || []).map(x => '<h2>' + esc(x.title) + '</h2>' + x.html).join('') +
         '<h2>Show the working</h2>' + wk +
-        '<h2>Prediction history (this session)</h2>' + hist +
+        (teacherTool ? '' : '<h2>Prediction history (this session)</h2>' + hist) +
         '<h2>Sources</h2><ol>' + sources + '</ol>' +
-        '<div class="sig"><span>Student signature</span><span>Teacher check</span></div></div>';
+        (teacherTool ? '' : '<div class="sig"><span>Student signature</span><span>Teacher check</span></div>') + '</div>';
       return report;
     };
     $('shReport').addEventListener('click', () => {
@@ -644,6 +889,10 @@ const Shell = (function () {
         '<h3>Your class</h3><div class="fld"><label for="shTeam">Team (optional)</label><span class="ctl"><input type="text" id="shTeam" maxlength="40" style="text-align:left"></span></div>' +
         '<div class="fld"><label for="shPeriod">Class period (optional)</label><span class="ctl"><input type="text" id="shPeriod" maxlength="20" style="text-align:left"></span></div>' +
         '<div id="shSetExtra"></div>' +
+        (CH ? '<h3>Challenges (teacher)</h3><p class="note">Paste a challenge list (JSON) to replace the built-in examples. Students paste the same list into their copy. The help panel shows the format.</p>' +
+          '<textarea id="shChText" rows="7" spellcheck="false" aria-describedby="shChMsg"></textarea>' +
+          '<div class="btnrow"><button class="btn" id="shChSave" type="button">Use this list</button><button class="btn" id="shChReset" type="button">Use the built-in examples</button></div>' +
+          '<p class="note" id="shChMsg" role="status"></p>' : '') +
         '<h3>Your data</h3><p>Your name, current design, predictions and settings are kept in this browser only.</p>' +
         '<div class="btnrow"><button class="btn danger" id="shClear">Clear my data</button></div><p class="note" id="shClearMsg"></p>';
       $('shSig').value = String(app.settings.sig);
@@ -652,6 +901,25 @@ const Shell = (function () {
       $('shTeam').addEventListener('input', () => { app.settings.team = $('shTeam').value; saveSettings(); });
       $('shPeriod').addEventListener('input', () => { app.settings.classPeriod = $('shPeriod').value; saveSettings(); });
       if (cfg.settingsExtra) cfg.settingsExtra(app, $('shSetExtra'));
+      if (CH) {
+        const custom = S.get('challenges', null);
+        $('shChText').value = JSON.stringify(custom || { tool: cfg.tool, schemaVersion: CHALLENGE_VERSION, challenges: CH.builtIn || [] }, null, 2);
+        $('shChMsg').textContent = custom ? 'Using your challenge list.' : 'Using the built-in examples.';
+        $('shChSave').addEventListener('click', () => {
+          try {
+            const res = readChallengeList($('shChText').value, cfg.tool);
+            S.set('challenges', JSON.parse($('shChText').value));
+            $('shChMsg').textContent = 'Saved ' + res.value.challenges.length + ' challenge' + (res.value.challenges.length === 1 ? '' : 's') + '.' + (res.warnings.length ? ' ' + res.warnings.join(' ') : '');
+            if (app.settings.challengeId && !app.challengeList().some(c => c.id === app.settings.challengeId)) { app.settings.challengeId = null; saveSettings(); }
+            render();
+          } catch (e) { $('shChMsg').textContent = e.message; }
+        });
+        $('shChReset').addEventListener('click', () => {
+          S.del('challenges'); app.settings.challengeId = null; saveSettings();
+          $('shChText').value = JSON.stringify({ tool: cfg.tool, schemaVersion: CHALLENGE_VERSION, challenges: CH.builtIn || [] }, null, 2);
+          $('shChMsg').textContent = 'Using the built-in examples.'; render();
+        });
+      }
       let armed = false;
       $('shClear').addEventListener('click', () => {
         if (!armed) { armed = true; $('shClear').textContent = 'Click again to clear everything'; $('shClearMsg').textContent = 'This removes your name, design, prediction log and settings from this browser.'; return; }
@@ -675,16 +943,19 @@ const Shell = (function () {
        ================================================================= */
     function renderHelp() {
       const hp = cfg.help || {};
-      const keys = (hp.keys || []).concat([['?', 'Open this help'], ['Esc', 'Close a dialog'], ['↑ / ↓ in a number box', 'Step the value (hold Shift for ×10)'], ['Enter in a prediction box', 'Check']]);
-      helpD.body.innerHTML = (hp.html || '') +
-        '<h3>Predict first</h3><p>Turn on <strong>Predict first</strong> in the header. The results you are asked to predict are hidden. Type a prediction for each one and press <strong>Check</strong>. The tool shows how far off you were and saves the attempt to your prediction log (<strong>Log</strong> button). Change any input and the results hide again. Within 1% counts as a match and within 5% as close. Open <strong>Show the working</strong> to see each step of the calculation and find where a prediction went wrong.</p>' +
+      const keys = (cfg.tabs ? [['← / → on the tabs', 'Switch view']] : []).concat(hp.keys || []).concat([['?', 'Open this help'], ['Esc', 'Close a dialog'], ['↑ / ↓ in a number box', 'Step the value (hold Shift for ×10)']]).concat(cfg.predictFirst === false ? [] : [['Enter in a prediction box', 'Check']]);
+      const pfHelp = cfg.predictFirst === false ? '' :
+        '<h3>Predict first</h3><p>Turn on <strong>Predict first</strong> in the header. The results you are asked to predict are hidden. Type a prediction for each one and press <strong>Check</strong>. The tool shows how far off you were and saves the attempt to your prediction log (<strong>Log</strong> button). Change any input and the results hide again. Within 1% counts as a match and within 5% as close. Open <strong>Show the working</strong> to see each step of the calculation and find where a prediction went wrong.</p>';
+      const chHelp = !CH ? '' : '<h3>Challenges</h3><p>Choose a challenge from the list in the header. Predict first turns on, and some challenges hide input values or ask for a checked prediction before you run the model. Your teacher can replace the example challenges in Settings.</p>';
+      helpD.body.innerHTML = (hp.html || '') + pfHelp + chHelp +
         '<h3>Numbers and units</h3><p>Results show 3 significant figures (4 in Settings). The tool never rounds in the middle of a calculation. ' + (hp.units || '') + '</p>' +
         '<h3>Saving your work</h3><p>Your name, design and predictions are kept in this browser. <strong>Save</strong> downloads a design file, and <strong>Load</strong> opens one (you can also drop a file onto the page). <strong>Export image</strong> downloads a picture of the drawing, and <strong>Report</strong> opens a printable page: choose "Save as PDF" in the print window. Exports always print ink on paper, whichever theme is on screen.</p>' +
         '<h3>Keyboard</h3><ul>' + keys.map(([k, a]) => '<li><kbd>' + esc(k) + '</kbd> ' + esc(a) + '</li>').join('') + '</ul>' +
         '<p>Screen readers hear a description of the drawing whenever it changes. With your system\'s reduce motion setting on, animations stop but numbers stay live. Use a laptop, Chromebook or full-size tablet; phone screens are too small for the drawing.</p>' +
         '<h3>Sources</h3><ol>' + (hp.sources || []).map(s => '<li>' + esc(s.title) + (s.url ? ': <a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.url) + '</a>' : '') + '</li>').join('') + '</ol>' +
         '<div class="teacher"><h3 style="margin-top:0">Teacher notes</h3>' + (hp.teacher || '') +
-        '<p>The prediction log exports as JSON or CSV in the shared Engineered by the Numbers format, so a class set can be merged in the Prediction Log Collector. Nothing is sent anywhere; all data stays in the student\'s browser.</p></div>' +
+        (cfg.predictFirst === false ? '' : '<p>The prediction log exports as JSON or CSV in the shared Engineered by the Numbers format, so a class set can be merged in the Prediction Log Collector. Nothing is sent anywhere; all data stays in the student\'s browser.</p>') +
+        (CH ? '<p>A challenge list is JSON: <code>{ "tool": "' + esc(cfg.tool) + '", "schemaVersion": 1, "challenges": [ { "id": "XX-1", "title": "…", "brief": "…", "inputs": { … }, "hidden": [ … ], "tolerance": { "match": 1, "close": 5 }, "requirePrediction": true } ] }</code>. Input values are in SI units, using the names shown in a saved design file. Paste it in Settings.</p>' : '') + '</div>' +
         '<p class="note">' + esc(cfg.tool) + ' version ' + esc(cfg.version) + '.</p>';
     }
     app.openHelp = () => { renderHelp(); helpD.dlg.showModal(); };
@@ -704,6 +975,6 @@ const Shell = (function () {
     return app;
   }
 
-  return { create, util, version: '1.0.0' };
+  return { create, util, version: '1.2.0' };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Shell;
